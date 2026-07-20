@@ -15,9 +15,13 @@ into de-duplicated, ranked findings with configurable validation and enrichment.
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Kritt-ai/open-kritt?sort=semver)](https://github.com/Kritt-ai/open-kritt/releases)
 
-[Documentation](docs-site/getting-started/welcome.mdx) ·
-[Getting started](docs-site/getting-started/installation-and-setup.mdx) ·
-[Contributing](CONTRIBUTING.md)
+[Website](https://kritt.ai) ·
+[Documentation](https://docs.kritt.ai) ·
+[Getting started](https://docs.kritt.ai/getting-started/installation-and-setup) ·
+[Contributing](CONTRIBUTING.md) ·
+[Research paper](https://kritt.ai/open-kritt-launch) ·
+[Discord community](https://t.co/WzXMUKWxcR) ·
+[Twitter](https://x.com/Kritt_AI)
 
 </div>
 
