@@ -23,18 +23,18 @@ Finding:
 Task:
 Decide whether this finding is fundamentally a resource exhaustion attack.
 
-Set resource_exhaustion=true when the core exploit is memory exhaustion, out-of-memory, unbounded storage growth, queue/pool exhaustion, connection/session exhaustion, file descriptor exhaustion, or another bounded runtime resource being consumed until service or network function fails.
+Set _chip_resource_exhaustion=true when the core exploit is memory exhaustion, out-of-memory, unbounded storage growth, queue/pool exhaustion, connection/session exhaustion, file descriptor exhaustion, or another bounded runtime resource being consumed until service or network function fails.
 
-Set resource_exhaustion=false for unrelated bug classes, purely logical consensus bugs, authorization bypasses, reward/accounting bugs, or cases where resource pressure is only incidental.
+Set _chip_resource_exhaustion=false for unrelated bug classes, purely logical consensus bugs, authorization bypasses, reward/accounting bugs, or cases where resource pressure is only incidental.
 
 Score:
 - attack_reliability: 1 = rare/specific state, 2 = realistic but conditional, 3 = reliable when attempted.
 - network_scale: 1 = one node/user, 2 = several nodes/users, 3 = broad network participation or many victims.
 - mainnet_impact: 0 = no meaningful mainnet impact, 1 = limited, 2 = material but not catastrophic, 3 = severe chain-wide or high-value impact.
 
-Be conservative. If evidence is ambiguous, set resource_exhaustion=false and explain what is missing.
+Be conservative. If evidence is ambiguous, set _chip_resource_exhaustion=false and explain what is missing.
 $script$,
-    '{"resource_exhaustion":"boolean","attack_reliability":"number","network_scale":"number","mainnet_impact":"number","resource_exhaustion_reason":"string","attack_reliability_reason":"string","network_scale_reason":"string","mainnet_impact_reason":"string"}'
+    '{"_chip_resource_exhaustion":"boolean","attack_reliability":"number","network_scale":"number","mainnet_impact":"number","resource_exhaustion_reason":"string","attack_reliability_reason":"string","network_scale_reason":"string","mainnet_impact_reason":"string"}'
 WHERE NOT EXISTS (SELECT 1 FROM public.post_scripts WHERE name = 'Resource exhaustion');
 
 INSERT INTO public.post_scripts (name, description, content, output_format)
