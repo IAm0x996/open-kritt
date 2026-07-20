@@ -1,0 +1,85 @@
+---
+title: "OpenRouter"
+description: "Create an OpenRouter inference key and configure an exact model identifier."
+---
+
+The **OpenRouter** provider uses `OPENROUTER_API_KEY` to route compatible models through
+OpenRouter. open·kritt defaults this provider to the Claude Code harness.
+
+Unlike Codex and Claude, OpenRouter uses a free-text model field. Its catalog is too broad
+and changes too frequently for open·kritt to present a bounded account-specific picker.
+
+## Create and configure the key
+
+<Steps>
+  <Step title="Create an OpenRouter account">
+    Sign in to [OpenRouter](https://openrouter.ai/) and open
+    [Credits](https://openrouter.ai/settings/credits). Add credits for paid models and
+    reliable scan capacity. Free models may have lower limits.
+  </Step>
+  <Step title="Create an inference API key">
+    Open [API keys](https://openrouter.ai/settings/keys), create a regular key, and copy
+    it when shown. You can set a credit limit to bound its spend.
+  </Step>
+  <Step title="Save it in open·kritt">
+    Run `./kritt setup`, choose **OpenRouter API key**, and paste the key into the hidden
+    input. The CLI writes it to `OPENROUTER_API_KEY` in `.env`.
+  </Step>
+  <Step title="Start or recreate the stack">
+    ```bash
+    ./kritt start
+    ```
+
+    Stop an already-running attached stack with Ctrl+C first.
+  </Step>
+  <Step title="Choose an exact model ID">
+    Find a model on the [OpenRouter model catalog](https://openrouter.ai/models) and
+    enter its exact `author/model` identifier in the scan or generation form.
+  </Step>
+</Steps>
+
+<Warning>
+  Create a regular inference API key. An OpenRouter management key can create and manage
+  other keys, but it cannot call model completion endpoints.
+</Warning>
+
+## Model compatibility
+
+open·kritt does not validate an OpenRouter model identifier before submitting a run. The
+selected model must support the agent behavior needed by the chosen harness, including a
+large code context, tool use for scans, and reliable structured output.
+
+The **Claude Code** harness is the recommended OpenRouter path and is selected by default.
+open·kritt configures OpenRouter's Anthropic-compatible endpoint internally; you do not
+need to set `ANTHROPIC_BASE_URL` or `ANTHROPIC_AUTH_TOKEN` yourself.
+
+The **Codex** harness is an advanced option. Scan tool mode requires a matching OpenRouter
+provider definition in the mounted Codex configuration, and the model must be compatible
+with Codex's agent and Responses API behavior. Use Claude Code unless you intentionally
+maintain that custom Codex configuration.
+
+The engine image includes an experimental Cursor adapter, but it is not a supported
+OpenRouter harness. Cursor headless authentication and OpenRouter's Cursor BYOK endpoint
+require separate setup that open·kritt does not currently perform, so the API and UI do
+not expose this combination.
+
+## Verify and troubleshoot
+
+- `./kritt setup` should show **OpenRouter API key present**.
+- The create and generation forms should list **OpenRouter** and keep the model field as
+  free text.
+- A `401` usually means the key is invalid or revoked. A `402` generally means the account
+  has insufficient credits.
+- A model-not-found error usually means the identifier is misspelled or unavailable to the
+  account. Copy the exact ID from the model catalog.
+- If a run starts but cannot use tools or return valid structured output, choose a model
+  with the required capabilities or switch harnesses.
+
+See OpenRouter's official [authentication guide](https://openrouter.ai/docs/api/reference/authentication),
+[model catalog guide](https://openrouter.ai/docs/guides/overview/models), and
+[Claude Code integration](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration)
+for current provider behavior.
+
+Next: configure [Codex](/ai-provider-setup/codex),
+[Claude Code](/ai-provider-setup/claude-code), or learn how to choose a
+[model and harness](/scans/model-and-harness).
