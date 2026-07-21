@@ -644,7 +644,7 @@ export default function ScanDetail() {
                   textTransform: 'uppercase',
                 }}
               >
-                Type
+                Actor / Type
               </span>
             </div>
             {findingPages.pageItems.map((v) => {
@@ -802,29 +802,7 @@ export default function ScanDetail() {
                     </span>
                   </div>
                   <ChipList chips={chips} fallback={postOutputSummary(v)} />
-                  <div style={{ minWidth: 0 }}>
-                    <span
-                      className="mono"
-                      title={v.vulnerability_type || 'finding'}
-                      style={{
-                        display: 'inline-block',
-                        maxWidth: '100%',
-                        fontSize: 11.5,
-                        fontWeight: 700,
-                        padding: '4px 10px',
-                        borderRadius: 6,
-                        border: '1px solid var(--border)',
-                        background: 'var(--surface-2)',
-                        color: 'var(--text-2)',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        verticalAlign: 'middle',
-                      }}
-                    >
-                      {v.vulnerability_type || 'finding'}
-                    </span>
-                  </div>
+                  <FindingActorTypeCell maliciousActor={v.malicious_actor} vulnerabilityType={v.vulnerability_type} />
                 </div>
               );
             })}
@@ -1362,6 +1340,54 @@ export function ScanStatusPanel({ scan }) {
 // the key without the prefix; the value is shown below it. Capped at MAX_CHIPS.
 const CHIP_PREFIX = '_chip_';
 const MAX_CHIPS = 3;
+
+export function FindingActorTypeCell({ maliciousActor, vulnerabilityType }) {
+  const actor = typeof maliciousActor === 'string' && maliciousActor.trim() ? maliciousActor.trim() : '—';
+  const type = typeof vulnerabilityType === 'string' && vulnerabilityType.trim() ? vulnerabilityType.trim() : 'finding';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, minWidth: 0 }}>
+      <span
+        className="mono"
+        aria-label={`Malicious actor: ${actor}`}
+        title={`Malicious actor: ${actor}`}
+        style={{
+          display: 'block',
+          maxWidth: '100%',
+          fontSize: 11.5,
+          fontWeight: 600,
+          color: 'var(--text)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {actor}
+      </span>
+      <span
+        className="mono"
+        title={type}
+        style={{
+          display: 'inline-block',
+          maxWidth: '100%',
+          fontSize: 11.5,
+          fontWeight: 700,
+          padding: '4px 10px',
+          borderRadius: 6,
+          border: '1px solid var(--border)',
+          background: 'var(--surface-2)',
+          color: 'var(--text-2)',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          verticalAlign: 'middle',
+        }}
+      >
+        {type}
+      </span>
+    </div>
+  );
+}
 
 function chipValue(value) {
   if (value === null || value === undefined) return '—';
