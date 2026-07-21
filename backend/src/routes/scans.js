@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import {
@@ -161,7 +162,10 @@ export async function patchScanIfPresent(tx, scanId, body, { assertAvailable, av
     }
     data.status = status;
     if (status === 'pending' && existing.status !== 'pending') {
-      data.reasoning = null;
+      // Nullable Prisma JSON fields distinguish SQL NULL from the JSON scalar
+      // `null`. Scan reasoning is either an object or SQL NULL; storing a JSON
+      // scalar here breaks engine-side nested warning updates.
+      data.reasoning = Prisma.DbNull;
       data.lastResumedAt = new Date();
     }
   }

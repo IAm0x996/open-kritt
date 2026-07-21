@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Prisma } from '@prisma/client';
 
 import { prismaUniqueConflict } from '../src/app.js';
 import { DEFAULT_WORKFLOW_NAMES } from '../src/lib/defaultWorkflows.js';
@@ -338,7 +339,7 @@ test('failed scans resume through pending and establish a new error-history boun
   assert.equal(result.kind, 'updated');
   assert.equal(calls[0], 'lock');
   assert.equal(calls[1].data.status, 'pending');
-  assert.equal(calls[1].data.reasoning, null);
+  assert.equal(calls[1].data.reasoning, Prisma.DbNull);
   assert.ok(calls[1].data.lastResumedAt instanceof Date);
 });
 
