@@ -3,7 +3,54 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 
-import { scanActions, ScanStatusPanel } from './ScanDetail.jsx';
+import {
+  mergeRunSettingsDraft,
+  runSettingsDraft,
+  runSettingsPayload,
+  scanActions,
+  ScanStatusPanel,
+} from './ScanDetail.jsx';
+
+describe('scan run settings', () => {
+  const current = {
+    model: 'gpt-5-codex',
+    model_provider: 'codex',
+    thinking_effort: 'medium',
+    harness: 'codex',
+    job_limit: '250',
+  };
+
+  it('preserves the job limit when catalog normalization returns only model fields', () => {
+    const catalogDraft = {
+      model: 'gpt-5-codex',
+      model_provider: 'codex',
+      thinking_effort: 'medium',
+      harness: 'codex',
+    };
+
+    expect(mergeRunSettingsDraft(current, catalogDraft)).toEqual(current);
+    expect(runSettingsPayload(catalogDraft, current)).toEqual({});
+  });
+
+  it('normalizes older scan records into complete string-valued drafts', () => {
+    expect(runSettingsDraft({ model: 'legacy-model' })).toEqual({
+      model: 'legacy-model',
+      model_provider: 'openrouter',
+      thinking_effort: 'medium',
+      harness: 'codex',
+      job_limit: '',
+    });
+  });
+
+  it('treats fields missing from a partial draft as unchanged', () => {
+    expect(runSettingsPayload({ model: ' replacement-model ' }, current)).toEqual({ model: 'replacement-model' });
+  });
+
+  it('still supports setting and clearing a job limit', () => {
+    expect(runSettingsPayload({ job_limit: ' 25 ' }, { ...current, job_limit: '' })).toEqual({ jobLimit: 25 });
+    expect(runSettingsPayload({ job_limit: '' }, current)).toEqual({ jobLimit: null });
+  });
+});
 
 describe('scan lifecycle actions', () => {
   it('offers stop controls without allowing active deletion', () => {

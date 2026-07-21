@@ -824,14 +824,11 @@ function ScanRunSettings({ scan, onSave, references, referencesLoading, referenc
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const current = runSettingsDraft(scan);
-  const activeDraft = draft || current;
+  const activeDraft = mergeRunSettingsDraft(current, draft);
   const payload = draft ? runSettingsPayload(draft, current) : {};
   const dirty = Object.keys(payload).length > 0;
-  const jobLimitValid =
-    !activeDraft.job_limit.trim() ||
-    (/^\d+$/.test(activeDraft.job_limit.trim()) &&
-      Number(activeDraft.job_limit) >= 1 &&
-      Number(activeDraft.job_limit) <= 1_000_000);
+  const jobLimit = activeDraft.job_limit.trim();
+  const jobLimitValid = !jobLimit || (/^\d+$/.test(jobLimit) && Number(jobLimit) >= 1 && Number(jobLimit) <= 1_000_000);
   const valid =
     jobLimitValid && !!references && modelConfigurationIsValid(activeDraft, references.providers, references.catalog);
   useUnsavedChangesPrompt(editing && (dirty || saving));
@@ -839,7 +836,12 @@ function ScanRunSettings({ scan, onSave, references, referencesLoading, referenc
   const open = () => {
     const currentDraft = runSettingsDraft(scan);
     setDraft(
-      references ? modelConfigurationForCatalog(currentDraft, references.providers, references.catalog) : currentDraft
+      references
+        ? mergeRunSettingsDraft(
+            currentDraft,
+            modelConfigurationForCatalog(currentDraft, references.providers, references.catalog)
+          )
+        : currentDraft
     );
     setError(null);
     setEditing(true);
@@ -950,11 +952,7 @@ function ScanRunSettings({ scan, onSave, references, referencesLoading, referenc
           <ModelConfiguration
             value={activeDraft}
             onChange={(nextDraft) =>
-              setDraft((currentDraft) => ({
-                ...currentDraft,
-                ...nextDraft,
-                job_limit: nextDraft.job_limit ?? currentDraft.job_limit,
-              }))
+              setDraft((currentDraft) => mergeRunSettingsDraft(currentDraft || current, nextDraft))
             }
             providers={references?.providers || []}
             catalog={references?.catalog || {}}
@@ -1043,7 +1041,7 @@ function ScanRunSettings({ scan, onSave, references, referencesLoading, referenc
   );
 }
 
-function runSettingsDraft(scan) {
+export function runSettingsDraft(scan = {}) {
   return {
     model: scan.model || '',
     model_provider: scan.modelProvider || 'openrouter',
@@ -1053,14 +1051,42 @@ function runSettingsDraft(scan) {
   };
 }
 
-function runSettingsPayload(draft, current) {
+function runSettingsValue(value, fallback) {
+  if (value === undefined) return fallback;
+  if (value === null) return '';
+  return typeof value === 'string' ? value : String(value);
+}
+
+export function mergeRunSettingsDraft(current = {}, patch = {}) {
+  const base = {
+    model: runSettingsValue(current?.model, ''),
+    model_provider: runSettingsValue(current?.model_provider, 'openrouter'),
+    thinking_effort: runSettingsValue(current?.thinking_effort, 'medium'),
+    harness: runSettingsValue(current?.harness, 'codex'),
+    job_limit: runSettingsValue(current?.job_limit, ''),
+  };
+  return {
+    model: runSettingsValue(patch?.model, base.model),
+    model_provider: runSettingsValue(patch?.model_provider, base.model_provider),
+    thinking_effort: runSettingsValue(patch?.thinking_effort, base.thinking_effort),
+    harness: runSettingsValue(patch?.harness, base.harness),
+    job_limit: runSettingsValue(patch?.job_limit, base.job_limit),
+  };
+}
+
+export function runSettingsPayload(draft, current) {
+  const normalizedCurrent = mergeRunSettingsDraft({}, current);
+  const normalizedDraft = mergeRunSettingsDraft(normalizedCurrent, draft);
   const payload = {};
-  const model = draft.model.trim();
-  if (model !== current.model) payload.model = model;
-  if (draft.model_provider !== current.model_provider) payload.model_provider = draft.model_provider;
-  if (draft.thinking_effort !== current.thinking_effort) payload.thinking_effort = draft.thinking_effort;
-  if (draft.harness !== current.harness) payload.harness = draft.harness;
-  if (draft.job_limit !== current.job_limit) payload.jobLimit = draft.job_limit.trim() ? Number(draft.job_limit) : null;
+  const model = normalizedDraft.model.trim();
+  const jobLimit = normalizedDraft.job_limit.trim();
+  if (model !== normalizedCurrent.model) payload.model = model;
+  if (normalizedDraft.model_provider !== normalizedCurrent.model_provider)
+    payload.model_provider = normalizedDraft.model_provider;
+  if (normalizedDraft.thinking_effort !== normalizedCurrent.thinking_effort)
+    payload.thinking_effort = normalizedDraft.thinking_effort;
+  if (normalizedDraft.harness !== normalizedCurrent.harness) payload.harness = normalizedDraft.harness;
+  if (normalizedDraft.job_limit !== normalizedCurrent.job_limit) payload.jobLimit = jobLimit ? Number(jobLimit) : null;
   return payload;
 }
 
