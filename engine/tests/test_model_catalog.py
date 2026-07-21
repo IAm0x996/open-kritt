@@ -6,6 +6,8 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
 from open_kritt_engine import model_catalog
 from open_kritt_engine.model_catalog import (
     ModelCatalogRefresher,
@@ -269,61 +271,65 @@ def test_fetch_anthropic_models_uses_the_account_model_list(monkeypatch):
     assert timeout > 0
 
 
-def test_fetch_openrouter_models_keeps_ten_popular_code_and_security_suggestions(monkeypatch):
+def _openrouter_model(model_id, *, name=None, output_modalities=None, reasoning=None):
+    return {
+        "id": model_id,
+        "name": name or model_id,
+        "architecture": {"output_modalities": output_modalities or ["text"]},
+        **({"reasoning": reasoning} if reasoning is not None else {}),
+    }
+
+
+def test_fetch_openrouter_models_uses_account_catalog_and_keeps_all_text_models(monkeypatch):
     requests = []
 
     def fake_urlopen(request, timeout):
         requests.append((request, timeout))
         entries = [
-            {
-                "id": f"vendor/code-model-{index}",
-                "name": f"Code Model {index}",
-                "description": "Coding and software engineering model",
-                "supported_parameters": ["reasoning", "tools"],
-                "reasoning": {"supported_efforts": ["high", "minimal", "medium", "low"]},
-            }
-            for index in range(12)
+            _openrouter_model("vendor/general-chat", name="General Chat"),
+            _openrouter_model("openai/gpt-model", name="OpenAI through OpenRouter"),
+            _openrouter_model("z-ai/glm-5.2", name=" Z.ai GLM 5.2 "),
+            _openrouter_model("anthropic/claude-model", name="Claude through OpenRouter"),
+            _openrouter_model("vendor/image-only", output_modalities=["image"]),
+            _openrouter_model(
+                "vendor/reasoning-model",
+                reasoning={"supported_efforts": ["high", "minimal", "medium", "low"]},
+            ),
         ]
-        entries.insert(
-            0,
-            {
-                "id": "vendor/general-chat",
-                "name": "General Chat",
-                "description": "General conversation",
-                "supported_parameters": ["tools"],
-            },
-        )
         return io.BytesIO(json.dumps({"data": entries}).encode("utf-8"))
 
     monkeypatch.setattr(model_catalog, "urlopen", fake_urlopen)
     models, default_model = fetch_openrouter_models("openrouter-test-key", 2)
 
-    assert len(models) == 10
-    assert models[0]["id"] == "vendor/code-model-0"
-    assert models[0]["thinkingEfforts"] == ["low", "medium", "high"]
-    assert default_model == "vendor/code-model-0"
+    assert [model["id"] for model in models] == [
+        "vendor/general-chat",
+        "openai/gpt-model",
+        "z-ai/glm-5.2",
+        "anthropic/claude-model",
+        "vendor/reasoning-model",
+    ]
+    assert models[2]["label"] == "Z.ai GLM 5.2"
+    assert models[2]["isDefault"] is True
+    assert models[4]["thinkingEfforts"] == ["low", "medium", "high"]
+    assert default_model == "z-ai/glm-5.2"
     request, timeout = requests[0]
-    assert request.full_url == "https://openrouter.ai/api/v1/models?sort=most-popular"
+    assert request.full_url == "https://openrouter.ai/api/v1/models/user"
     assert request.get_header("Authorization") == "Bearer openrouter-test-key"
     assert timeout == 2
 
 
 def test_fetch_openrouter_models_uses_provider_default_or_all_gateway_efforts(monkeypatch):
     entries = [
-        {
-            "id": "vendor/default-reasoning-model",
-            "name": "Default Reasoning Model",
-            "description": "Coding model",
-            "supported_parameters": ["reasoning"],
-            "reasoning": {"mandatory": True},
-        },
-        {
-            "id": "vendor/gateway-effort-model",
-            "name": "Gateway Effort Model",
-            "description": "Coding model",
-            "supported_parameters": ["reasoning", "reasoning_effort"],
-            "reasoning": {"supported_efforts": None},
-        },
+        _openrouter_model(
+            "vendor/default-reasoning-model",
+            name="Default Reasoning Model",
+            reasoning={"mandatory": True},
+        ),
+        _openrouter_model(
+            "vendor/gateway-effort-model",
+            name="Gateway Effort Model",
+            reasoning={"supported_efforts": None},
+        ),
     ]
     monkeypatch.setattr(
         model_catalog,
@@ -337,79 +343,39 @@ def test_fetch_openrouter_models_uses_provider_default_or_all_gateway_efforts(mo
     assert models[1]["thinkingEfforts"] == ["low", "medium", "high", "xhigh", "max"]
 
 
-def test_fetch_openrouter_models_features_glm_kimi_and_sakana_without_anthropic_or_openai(monkeypatch):
-    featured = [
-        {
-            "id": "anthropic/claude-opus-latest",
-            "name": "Claude Opus",
-            "description": "Coding model",
-            "supported_parameters": ["reasoning"],
-        },
-        {
-            "id": "openai/gpt-latest",
-            "name": "GPT Latest",
-            "description": "Coding model",
-            "supported_parameters": ["reasoning"],
-        },
-        {
-            "id": "sakana/fugu-ultra",
-            "name": "Sakana: Fugu Ultra",
-            "description": "Coding and agentic workflows",
-            "supported_parameters": ["reasoning_effort"],
-        },
-        {
-            "id": "moonshotai/kimi-k2.7-code",
-            "name": "MoonshotAI: Kimi K2.7 Code",
-            "description": "Coding-focused model",
-            "supported_parameters": ["reasoning"],
-        },
-        {
-            "id": "z-ai/glm-5.2",
-            "name": "Z.ai: GLM 5.2",
-            "description": "Project-level software engineering",
-            "supported_parameters": ["reasoning_effort"],
-        },
-        {
-            "id": "moonshotai/kimi-k2.6",
-            "name": "MoonshotAI: Kimi K2.6",
-            "description": "Coding model",
-            "supported_parameters": ["reasoning"],
-        },
-        {
-            "id": "z-ai/glm-5.1",
-            "name": "Z.ai: GLM 5.1",
-            "description": "Coding model",
-            "supported_parameters": ["reasoning"],
-        },
+def test_fetch_openrouter_models_caps_the_sanitized_catalog(monkeypatch):
+    entries = [
+        _openrouter_model(f"vendor/model-{index}", name=f"Model {index}")
+        for index in range(model_catalog.MAX_CATALOG_MODELS + 25)
     ]
-    featured.extend(
-        {
-            "id": f"vendor/code-model-{index}",
-            "name": f"Code Model {index}",
-            "description": "Coding model",
-            "supported_parameters": ["reasoning"],
-        }
-        for index in range(10)
-    )
-
+    entries.append(_openrouter_model("z-ai/glm-5.2", name="Preferred Default"))
     monkeypatch.setattr(
         model_catalog,
         "urlopen",
-        lambda *_args, **_kwargs: io.BytesIO(json.dumps({"data": featured}).encode("utf-8")),
+        lambda *_args, **_kwargs: io.BytesIO(json.dumps({"data": entries}).encode("utf-8")),
     )
     models, default_model = fetch_openrouter_models("openrouter-test-key", 2)
 
-    assert [model["id"] for model in models[:3]] == [
-        "z-ai/glm-5.2",
-        "moonshotai/kimi-k2.7-code",
-        "sakana/fugu-ultra",
-    ]
-    assert len(models) == 10
+    assert len(models) == model_catalog.MAX_CATALOG_MODELS
+    assert models[0]["id"] == "vendor/model-0"
+    assert models[-1]["id"] == "z-ai/glm-5.2"
     assert default_model == "z-ai/glm-5.2"
-    assert models[2]["label"] == "Sakana: Fugu Ultra — expensive"
-    assert not any(model["id"].startswith(("anthropic/", "openai/")) for model in models)
-    assert "moonshotai/kimi-k2.6" not in {model["id"] for model in models}
-    assert "z-ai/glm-5.1" not in {model["id"] for model in models}
+
+
+def test_fetch_openrouter_models_rejects_oversized_or_invalid_responses(monkeypatch):
+    monkeypatch.setattr(model_catalog, "MAX_HTTP_CATALOG_BYTES", 32)
+    monkeypatch.setattr(
+        model_catalog,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(b'{"data":[{"id":"vendor/model","padding":"too large"}]}'),
+    )
+    with pytest.raises(model_catalog.ModelCatalogError, match="response was too large"):
+        fetch_openrouter_models("openrouter-test-key", 2)
+
+    monkeypatch.setattr(model_catalog, "MAX_HTTP_CATALOG_BYTES", 1024)
+    monkeypatch.setattr(model_catalog, "urlopen", lambda *_args, **_kwargs: io.BytesIO(b"not-json"))
+    with pytest.raises(model_catalog.ModelCatalogError, match="Could not read the OpenRouter model catalog"):
+        fetch_openrouter_models("openrouter-test-key", 2)
 
 
 def test_refresher_persists_only_configured_provider_catalogs():
@@ -455,3 +421,20 @@ def test_refresher_preserves_existing_catalog_on_provider_failure():
         {"provider": "codex", "error": "Unable to refresh the provider model catalog."},
     ]
     assert [conn.commits for conn in db.connections] == [1]
+
+
+def test_refresher_never_persists_openrouter_failure_details():
+    db = FakeDatabase()
+    secret = "openrouter-secret"
+    refresher = ModelCatalogRefresher(
+        db,
+        env={"OPENROUTER_API_KEY": secret},
+        fetch_openrouter=lambda: (_ for _ in ()).throw(RuntimeError(f"upstream rejected {secret}")),
+    )
+
+    assert refresher.refresh() == {"openrouter": False}
+    assert db.catalogs == []
+    assert db.errors == [
+        {"provider": "openrouter", "error": "Unable to refresh the provider model catalog."},
+    ]
+    assert secret not in json.dumps(db.errors)

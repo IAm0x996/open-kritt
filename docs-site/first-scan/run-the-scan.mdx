@@ -34,10 +34,11 @@ Open **Scans → New scan** and work down the form:
     the cheapest first scan.
   </Step>
   <Step title="Pick model, provider, and harness">
-    Choose a model from the available-model picker for Codex or Anthropic. For OpenRouter,
-    enter its exact model identifier. Then choose from the providers configured for the engine,
-    a compatible harness, and a thinking effort. The form defaults Codex to the Codex harness
-    and Anthropic/OpenRouter to Claude Code. If no provider is listed, complete
+    Choose a model from the searchable catalog for the selected provider. OpenRouter loads
+    choices from its authenticated model catalog and also accepts an exact custom
+    `author/model` ID when needed. Then choose a compatible harness and thinking effort.
+    The form defaults Codex to the Codex harness and Anthropic/OpenRouter to Claude Code. If
+    no provider is listed, complete
     [AI provider setup](/ai-provider-setup/overview) and recreate the stack.
   </Step>
   <Step title="Attach skills, post-scripts, and rankers">

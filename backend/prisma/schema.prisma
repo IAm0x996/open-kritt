@@ -80,8 +80,8 @@ model SeverityRanker {
   @@schema("public")
 }
 
-/// Cached provider model lists. OpenRouter remains free-form and is not stored
-/// here; Codex and Claude use these entries to constrain scan creation.
+/// Cached provider model lists. Codex and Claude entries constrain model
+/// selection; OpenRouter entries provide advisory, account-specific suggestions.
 model ModelCatalog {
   provider     String    @id
   models       Json      @default("[]")

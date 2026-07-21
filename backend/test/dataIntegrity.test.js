@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { prismaUniqueConflict } from '../src/app.js';
+import { DEFAULT_WORKFLOW_NAMES } from '../src/lib/defaultWorkflows.js';
 import { validateScanJobLimit, ValidationError } from '../src/lib/validation.js';
 import { agentSkillMutationState, countAgentSkillScanUsage } from '../src/routes/agentSkills.js';
 import { summarizeCanonicalFindings } from '../src/routes/overview.js';
@@ -74,6 +75,57 @@ test('referenced workflows cannot be deleted after taking the workflow row lock'
 
   assert.deepEqual(await deleteWorkflowIfUnused(tx, 7n), { kind: 'in-use', scanCount: 2 });
   assert.deepEqual(calls, ['lock']);
+});
+
+test('unused custom workflows and their steps are deleted after the usage check', async () => {
+  const calls = [];
+  const tx = {
+    $queryRaw: async () => calls.push({ operation: 'lock' }),
+    workflow: {
+      findUnique: async (args) => {
+        calls.push({ operation: 'workflow.findUnique', args });
+        return { id: 7n, name: 'Custom', stepIds: [10n, 11n] };
+      },
+      delete: async (args) => calls.push({ operation: 'workflow.delete', args }),
+    },
+    scan: {
+      count: async (args) => {
+        calls.push({ operation: 'scan.count', args });
+        return 0;
+      },
+    },
+    step: { deleteMany: async (args) => calls.push({ operation: 'step.deleteMany', args }) },
+  };
+
+  assert.deepEqual(await deleteWorkflowIfUnused(tx, 7n), { kind: 'deleted' });
+  assert.deepEqual(calls, [
+    { operation: 'lock' },
+    { operation: 'workflow.findUnique', args: { where: { id: 7n } } },
+    { operation: 'scan.count', args: { where: { workflowId: 7n } } },
+    { operation: 'workflow.delete', args: { where: { id: 7n } } },
+    { operation: 'step.deleteMany', args: { where: { id: { in: [10n, 11n] } } } },
+  ]);
+});
+
+test('built-in and missing workflows cannot be deleted', async () => {
+  const mutations = [];
+  const defaultTx = {
+    $queryRaw: async () => [],
+    workflow: {
+      findUnique: async () => ({ id: 7n, name: DEFAULT_WORKFLOW_NAMES[0], stepIds: [10n] }),
+      delete: async () => mutations.push('workflow.delete'),
+    },
+    scan: { count: async () => mutations.push('scan.count') },
+    step: { deleteMany: async () => mutations.push('step.deleteMany') },
+  };
+  assert.deepEqual(await deleteWorkflowIfUnused(defaultTx, 7n), { kind: 'default' });
+
+  const missingTx = {
+    ...defaultTx,
+    workflow: { ...defaultTx.workflow, findUnique: async () => null },
+  };
+  assert.deepEqual(await deleteWorkflowIfUnused(missingTx, 99n), { kind: 'not-found' });
+  assert.deepEqual(mutations, []);
 });
 
 test('scan cleanup deletes every owned record in dependency order', async () => {

@@ -46,7 +46,15 @@ const modelCatalog = configuredModelCatalog({
       input: 'text',
       status: 'ready',
       defaultModel: 'z-ai/glm-5.2',
-      models: [],
+      models: [
+        {
+          id: 'z-ai/glm-5.2',
+          label: 'Z.ai: GLM 5.2',
+          isDefault: true,
+          thinkingEfforts: ['high', 'xhigh'],
+        },
+        { id: 'moonshotai/kimi-code', label: 'Moonshot: Kimi Code', thinkingEfforts: ['default'] },
+      ],
     },
   ],
 });
@@ -124,7 +132,7 @@ describe('model catalog', () => {
     ]);
   });
 
-  it('allows free text only for OpenRouter and validates native catalog selections', () => {
+  it('offers OpenRouter catalog suggestions without turning them into an allow-list', () => {
     expect(modelsForModelProvider(modelCatalog, 'codex')[0]).toMatchObject({
       note: 'This model may have cybersecurity usage restrictions.',
       noteUrl: 'https://chatgpt.com/cyber',
@@ -132,8 +140,13 @@ describe('model catalog', () => {
     expect(usesFreeTextModelInput(modelCatalog, 'openrouter')).toBe(true);
     expect(usesFreeTextModelInput(modelCatalog, 'codex')).toBe(false);
     expect(usesFreeTextModelInput(modelCatalog, 'claude')).toBe(false);
+    expect(modelsForModelProvider(modelCatalog, 'openrouter').map(({ id }) => id)).toEqual([
+      'z-ai/glm-5.2',
+      'moonshotai/kimi-code',
+    ]);
     expect(modelCatalogIsReady(modelCatalog, 'codex')).toBe(true);
     expect(modelCatalogIsReady(modelCatalog, 'claude')).toBe(true);
+    expect(modelCatalogIsReady(modelCatalog, 'openrouter')).toBe(true);
     expect(modelCatalogIsReady(modelCatalog, 'unknown')).toBe(false);
     expect(isModelSelectionValid('custom/provider-model', modelCatalog, 'openrouter')).toBe(true);
     expect(isModelSelectionValid('', modelCatalog, 'openrouter')).toBe(false);
@@ -158,6 +171,20 @@ describe('model catalog', () => {
     expect(isModelSelectionValid('gpt-5-codex', loadingCatalog, 'codex')).toBe(false);
   });
 
+  it('keeps exact OpenRouter IDs usable while suggestions load or refresh', () => {
+    const loadingCatalog = configuredModelCatalog({
+      providers: [{ provider: 'openrouter', input: 'text', status: 'loading', models: [] }],
+    });
+
+    expect(usesFreeTextModelInput(loadingCatalog, 'openrouter')).toBe(true);
+    expect(modelCatalogIsReady(loadingCatalog, 'openrouter')).toBe(false);
+    expect(isModelSelectionValid('vendor/custom-model', loadingCatalog, 'openrouter')).toBe(true);
+    expect(modelForCatalogChange('vendor/custom-model', 'openrouter', 'openrouter', loadingCatalog)).toBe(
+      'vendor/custom-model'
+    );
+    expect(modelForCatalogChange('gpt-5-codex', 'codex', 'openrouter', loadingCatalog)).toBe('');
+  });
+
   it('uses only the selected native model thinking efforts', () => {
     expect(thinkingEffortsForModel(modelCatalog, 'codex', 'gpt-5-codex', ['low', 'medium', 'high', 'xhigh'])).toEqual([
       'low',
@@ -168,11 +195,12 @@ describe('model catalog', () => {
     expect(thinkingEffortsForModel(modelCatalog, 'claude', 'custom-model', ['low', 'medium', 'high'])).toEqual([]);
   });
 
-  it('keeps generic harness-compatible thinking choices for OpenRouter', () => {
+  it('uses discovered OpenRouter efforts and falls back safely for custom IDs', () => {
     const openRouterCatalog = configuredModelCatalog({
       providers: [
         {
           provider: 'openrouter',
+          input: 'text',
           status: 'ready',
           models: [
             { id: 'google/gemini', thinkingEfforts: ['low', 'medium', 'high'] },
@@ -182,14 +210,16 @@ describe('model catalog', () => {
       ],
     });
     expect(thinkingEffortsForModel(openRouterCatalog, 'openrouter', 'google/gemini', [], 'claude-code')).toEqual([
-      'default',
       'low',
       'medium',
       'high',
-      'xhigh',
-      'max',
     ]);
     expect(thinkingEffortsForModel(openRouterCatalog, 'openrouter', 'google/gemini', [], 'codex')).toEqual([
+      'low',
+      'medium',
+      'high',
+    ]);
+    expect(thinkingEffortsForModel(openRouterCatalog, 'openrouter', 'vendor/custom', [], 'codex')).toEqual([
       'default',
       'low',
       'medium',

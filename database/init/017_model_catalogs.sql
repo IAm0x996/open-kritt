@@ -1,4 +1,4 @@
--- Cached model lists for providers whose native APIs expose a finite catalog.
+-- Cached, UI-safe model lists discovered from configured provider accounts.
 -- The catalog refresher owns writes; this migration is safe to apply repeatedly.
 
 CREATE TABLE IF NOT EXISTS public.model_catalogs (

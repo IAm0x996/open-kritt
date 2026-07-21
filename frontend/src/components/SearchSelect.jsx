@@ -2,6 +2,24 @@ import { useEffect, useId, useRef, useState } from 'react';
 import Pagination from './Pagination.jsx';
 import { usePagination } from '../lib/usePagination.js';
 
+export function searchSelectOptions(items, query, filter, { allowCustomValue = false, customValueMaxLength } = {}) {
+  const customValue = query.trim();
+  const filtered = items.filter((item) => filter(item, customValue.toLowerCase()));
+  const exactMatchIndex = filtered.findIndex((item) => item.id === customValue);
+  if (exactMatchIndex > 0) {
+    const [exactMatch] = filtered.splice(exactMatchIndex, 1);
+    filtered.unshift(exactMatch);
+  }
+  const customItem =
+    allowCustomValue &&
+    customValue &&
+    (!customValueMaxLength || customValue.length <= customValueMaxLength) &&
+    !items.some((item) => item.id === customValue)
+      ? { id: customValue, label: customValue, isCustomValue: true }
+      : null;
+  return customItem ? [customItem, ...filtered] : filtered;
+}
+
 export default function SearchSelect({
   items,
   value,
@@ -14,6 +32,9 @@ export default function SearchSelect({
   height = 46,
   emptyText = 'No matches.',
   disabled = false,
+  allowCustomValue = false,
+  customValueLabel = 'Use exact value',
+  customValueMaxLength,
   id,
   label,
   pageSize = 25,
@@ -24,14 +45,15 @@ export default function SearchSelect({
   const searchRef = useRef(null);
   const triggerRef = useRef(null);
   const listboxId = useId();
-  const selected = items.find((item) => item.id === value);
-  const selectionDisabled = disabled || items.length === 0;
+  const selected =
+    items.find((item) => item.id === value) ||
+    (allowCustomValue && value ? { id: value, label: value, isCustomValue: true } : undefined);
+  const selectionDisabled = disabled || (items.length === 0 && !allowCustomValue);
 
-  const normalizedQuery = query.toLowerCase();
-  const filtered = items.filter((item) => filter(item, normalizedQuery));
-  const optionPages = usePagination(filtered, { pageSize, resetKey: query });
+  const options = searchSelectOptions(items, query, filter, { allowCustomValue, customValueMaxLength });
+  const optionPages = usePagination(options, { pageSize, resetKey: query });
   const setOptionPage = optionPages.setPage;
-  const activeOptionId = filtered[activeIndex] ? `${listboxId}-option-${activeIndex}` : null;
+  const activeOptionId = options[activeIndex] ? `${listboxId}-option-${activeIndex}` : null;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -44,12 +66,12 @@ export default function SearchSelect({
   }, [selectionDisabled]);
 
   useEffect(() => {
-    if (!open || filtered.length === 0) return;
-    if (activeIndex < 0 || activeIndex >= filtered.length) {
+    if (!open || options.length === 0) return;
+    if (activeIndex < 0 || activeIndex >= options.length) {
       setActiveIndex(0);
       setOptionPage(1);
     }
-  }, [activeIndex, filtered.length, open, setOptionPage]);
+  }, [activeIndex, open, options.length, setOptionPage]);
 
   useEffect(() => {
     if (!open || !activeOptionId) return;
@@ -58,8 +80,8 @@ export default function SearchSelect({
 
   const openMenu = (direction = 1) => {
     if (selectionDisabled) return;
-    const selectedIndex = filtered.findIndex((item) => item.id === value);
-    const nextIndex = selectedIndex >= 0 ? selectedIndex : direction < 0 ? filtered.length - 1 : 0;
+    const selectedIndex = options.findIndex((item) => item.id === value);
+    const nextIndex = selectedIndex >= 0 ? selectedIndex : direction < 0 ? options.length - 1 : 0;
     setActiveIndex(nextIndex);
     optionPages.setPage(Math.floor(nextIndex / optionPages.pageSize) + 1);
     setOpen(true);
@@ -80,17 +102,17 @@ export default function SearchSelect({
   const handleSearchKeyDown = (event) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      const nextIndex = filtered.length ? (activeIndex + 1) % filtered.length : 0;
+      const nextIndex = options.length ? (activeIndex + 1) % options.length : 0;
       setActiveIndex(nextIndex);
       optionPages.setPage(Math.floor(nextIndex / optionPages.pageSize) + 1);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      const nextIndex = filtered.length ? (activeIndex - 1 + filtered.length) % filtered.length : 0;
+      const nextIndex = options.length ? (activeIndex - 1 + options.length) % options.length : 0;
       setActiveIndex(nextIndex);
       optionPages.setPage(Math.floor(nextIndex / optionPages.pageSize) + 1);
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      choose(filtered[activeIndex]);
+      choose(options[activeIndex]);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       closeMenu(true);
@@ -167,6 +189,7 @@ export default function SearchSelect({
                 aria-controls={listboxId}
                 aria-activedescendant={activeOptionId || undefined}
                 spellCheck={false}
+                maxLength={allowCustomValue ? customValueMaxLength : undefined}
                 placeholder={placeholder}
                 style={{
                   width: '100%',
@@ -184,6 +207,41 @@ export default function SearchSelect({
             <div id={listboxId} role="listbox" style={{ maxHeight: 264, overflowY: 'auto', padding: 6 }}>
               {optionPages.pageItems.map((item, index) => {
                 const globalIndex = optionPages.startIndex + index;
+                if (item.isCustomValue) {
+                  return (
+                    <button
+                      key={`custom-${item.id}`}
+                      id={`${listboxId}-option-${globalIndex}`}
+                      type="button"
+                      role="option"
+                      aria-selected={item.id === value}
+                      tabIndex={-1}
+                      onMouseMove={() => setActiveIndex(globalIndex)}
+                      onClick={() => choose(item)}
+                      style={{
+                        width: '100%',
+                        display: 'block',
+                        padding: '10px 11px',
+                        borderRadius: 7,
+                        cursor: 'pointer',
+                        border: '1px dashed var(--border)',
+                        color: 'var(--text)',
+                        font: 'inherit',
+                        textAlign: 'left',
+                        background:
+                          globalIndex === activeIndex || item.id === value ? 'var(--accent-subtle)' : 'transparent',
+                      }}
+                    >
+                      <span style={{ display: 'block', color: 'var(--text-2)', fontSize: 11 }}>{customValueLabel}</span>
+                      <span
+                        className="mono"
+                        style={{ display: 'block', marginTop: 2, fontSize: 12.5, fontWeight: 600 }}
+                      >
+                        {item.id}
+                      </span>
+                    </button>
+                  );
+                }
                 return (
                   <button
                     key={item.id}
@@ -216,7 +274,7 @@ export default function SearchSelect({
                   </button>
                 );
               })}
-              {filtered.length === 0 && (
+              {options.length === 0 && (
                 <div style={{ padding: 16, textAlign: 'center', fontSize: 12.5, color: 'var(--text-3)' }}>
                   {emptyText}
                 </div>

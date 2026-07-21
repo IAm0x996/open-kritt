@@ -197,3 +197,21 @@ describe('scan lifecycle API', () => {
     expect(request.options.method).toBe('DELETE');
   });
 });
+
+describe('workflow lifecycle API', () => {
+  it('deletes a workflow with DELETE', async () => {
+    const originalFetch = globalThis.fetch;
+    let request;
+    globalThis.fetch = async (url, options) => {
+      request = { url, options };
+      return { ok: true, status: 204, json: async () => ({}) };
+    };
+    try {
+      await api.deleteWorkflow('27');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(request.url).toBe('/api/workflows/27');
+    expect(request.options.method).toBe('DELETE');
+  });
+});

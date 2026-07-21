@@ -8,9 +8,10 @@ runs your prompts and how.
 
 ## Model and provider
 
-- **model** - Codex and Anthropic use a searchable picker populated from the models available
-  to the configured account. OpenRouter remains a free-text model name because its catalog is
-  too broad; enter the provider's exact model identifier (for example `z-ai/glm-5.2`).
+- **model** - Codex and Anthropic use searchable choices populated for the configured
+  account. OpenRouter uses a periodically refreshed searchable catalog from its
+  authenticated models endpoint; you can also enter an exact custom `author/model` ID as
+  a compatibility escape hatch.
 - **model_provider** - where the model runs. The form lists only providers configured for
   the engine: `openrouter`, `claude`, and/or `codex`. Run `./kritt setup` and follow the
   [AI provider setup guides](/ai-provider-setup/overview) when none are available.
@@ -26,6 +27,11 @@ The **harness** is the CLI agent runtime that executes the prompt against the wo
 
 The harness is what actually reads the repository, runs the agent loop, and returns the
 structured output your steps require.
+
+Model catalogs are cached. A form can show a catalog as loading before the first
+successful refresh. If a later refresh fails, the last usable catalog remains available;
+without a cached result, discovery is shown as unavailable. An OpenRouter catalog entry is
+a suggestion rather than proof that the model supports every harness feature.
 
 Tool-enabled harness jobs run as root inside a disposable container. Each receives a
 writable copy of the target and dependency repositories plus direct outbound internet,

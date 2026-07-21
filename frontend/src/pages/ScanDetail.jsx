@@ -38,6 +38,23 @@ export function scanActions(status) {
   };
 }
 
+export async function loadModelReferences(fetchProviders, fetchCatalog) {
+  const [providerPayload, catalogResult] = await Promise.all([
+    Promise.resolve().then(fetchProviders),
+    Promise.resolve()
+      .then(fetchCatalog)
+      .then(
+        (catalog) => ({ catalog, error: null }),
+        (error) => ({ catalog: null, error })
+      ),
+  ]);
+  return {
+    providers: configuredModelProviders(providerPayload),
+    catalog: configuredModelCatalog(catalogResult.catalog),
+    catalogError: catalogResult.error,
+  };
+}
+
 export default function ScanDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -65,10 +82,10 @@ export default function ScanDetail() {
     reload: reloadModelReferences,
   } = useFetch(
     () =>
-      Promise.all([api.modelProviders(), api.modelCatalog()]).then(([providers, catalog]) => ({
-        providers: configuredModelProviders(providers),
-        catalog: configuredModelCatalog(catalog),
-      })),
+      loadModelReferences(
+        () => api.modelProviders(),
+        () => api.modelCatalog()
+      ),
     [],
     { pollMs: 5000 }
   );
@@ -387,6 +404,7 @@ export default function ScanDetail() {
           references={modelReferences}
           referencesLoading={modelReferencesLoading}
           referencesError={modelReferencesError}
+          catalogError={modelReferences?.catalogError}
           onRetryReferences={reloadModelReferences}
         />
 
@@ -818,7 +836,15 @@ export default function ScanDetail() {
   );
 }
 
-function ScanRunSettings({ scan, onSave, references, referencesLoading, referencesError, onRetryReferences }) {
+function ScanRunSettings({
+  scan,
+  onSave,
+  references,
+  referencesLoading,
+  referencesError,
+  catalogError,
+  onRetryReferences,
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -956,7 +982,7 @@ function ScanRunSettings({ scan, onSave, references, referencesLoading, referenc
             }
             providers={references?.providers || []}
             catalog={references?.catalog || {}}
-            catalogError={referencesError}
+            catalogError={catalogError}
             disabled={saving}
           />
           <label style={{ display: 'block', maxWidth: 280, marginTop: 13 }}>

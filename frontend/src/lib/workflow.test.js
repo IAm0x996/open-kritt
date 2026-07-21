@@ -11,7 +11,7 @@ import {
   isValidKey,
   parseTemplateRefs,
 } from './keys.js';
-import { availableKeysForDepth } from './workflow.js';
+import { availableKeysForDepth, workflowDeleteState } from './workflow.js';
 
 describe('availableKeysForDepth', () => {
   it('clears individual upstream keys at a consumes-all boundary', () => {
@@ -41,6 +41,29 @@ describe('availableKeysForDepth', () => {
     expect(available.has('entrypoint')).toBe(false);
     expect(available.has('flow')).toBe(false);
     expect(available.has('impact')).toBe(false);
+  });
+});
+
+describe('workflowDeleteState', () => {
+  it('allows an unused custom workflow to be deleted', () => {
+    expect(workflowDeleteState({ isDefault: false, scanCount: 0 })).toEqual({ canDelete: true, reason: '' });
+  });
+
+  it('blocks custom workflows that have scans and explains why', () => {
+    expect(workflowDeleteState({ isDefault: false, scanCount: 1 })).toEqual({
+      canDelete: false,
+      reason: '1 scan uses this workflow. Workflows with scans cannot be deleted.',
+    });
+    expect(workflowDeleteState({ isDefault: false, scanCount: 3 }).reason).toContain('3 scans');
+  });
+
+  it('blocks built-in workflows and fails closed without usage metadata', () => {
+    expect(workflowDeleteState({ isDefault: true, scanCount: 0 })).toEqual({
+      canDelete: false,
+      reason: 'Built-in workflows cannot be deleted.',
+    });
+    expect(workflowDeleteState({ isDefault: false }).canDelete).toBe(false);
+    expect(workflowDeleteState({ scanCount: 0 }).canDelete).toBe(false);
   });
 });
 

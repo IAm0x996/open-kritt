@@ -37,3 +37,28 @@ export function groupByDepth(steps) {
     };
   });
 }
+
+// Workflow deletion is intentionally fail-closed. The API remains the source
+// of truth and repeats this check under a database lock, but this state keeps
+// unavailable actions out of the workflow list and explains them on detail.
+export function workflowDeleteState(workflow) {
+  if (!workflow || workflow.isDefault !== false) {
+    return {
+      canDelete: false,
+      reason: workflow?.isDefault ? 'Built-in workflows cannot be deleted.' : 'Workflow usage is unavailable.',
+    };
+  }
+
+  if (workflow.scanCount === 0) return { canDelete: true, reason: '' };
+
+  if (Number.isInteger(workflow.scanCount) && workflow.scanCount > 0) {
+    const scans = `${workflow.scanCount} scan${workflow.scanCount === 1 ? '' : 's'}`;
+    const verb = workflow.scanCount === 1 ? 'uses' : 'use';
+    return {
+      canDelete: false,
+      reason: `${scans} ${verb} this workflow. Workflows with scans cannot be deleted.`,
+    };
+  }
+
+  return { canDelete: false, reason: 'Workflow usage is unavailable.' };
+}

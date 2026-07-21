@@ -96,10 +96,6 @@ export function modelCatalogEntry(provider, catalog) {
   const configuredDefault = normalizedModel(catalogValue(catalog, 'defaultModel', 'default_model'));
   const defaultModel = models.some((model) => model.id === configuredDefault) ? configuredDefault : null;
 
-  if (provider === 'openrouter') {
-    return { provider, input: 'text', models: [], defaultModel: null, status: 'ready' };
-  }
-
   // Subscription logins authenticate Claude Code but cannot call Anthropic's
   // API-key-only /v1/models endpoint. Keep a small current list of Claude Code
   // model IDs so subscription logins receive useful suggestions too.
@@ -116,10 +112,10 @@ export function modelCatalogEntry(provider, catalog) {
   const lastError = catalogValue(catalog, 'lastError', 'last_error');
   const defaultIsMissing = !configuredDefault || !defaultModel;
   // A failed refresh must not erase a previously valid bounded catalog. Without
-  // one, native-provider selection remains unavailable rather than accepting an
-  // unverified model ID.
+  // one, catalog-backed suggestions remain unavailable; OpenRouter still accepts
+  // explicit model IDs through its text input and selection validation policy.
   const status = models.length > 0 && !defaultIsMissing ? 'ready' : hasText(lastError) ? 'unavailable' : 'loading';
-  return { provider, input: 'select', models, defaultModel, status };
+  return { provider, input: provider === 'openrouter' ? 'text' : 'select', models, defaultModel, status };
 }
 
 export function buildModelCatalogResponse(configuredProviders, catalogs = []) {

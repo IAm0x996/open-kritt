@@ -4,12 +4,38 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 
 import {
+  loadModelReferences,
   mergeRunSettingsDraft,
   runSettingsDraft,
   runSettingsPayload,
   scanActions,
   ScanStatusPanel,
 } from './ScanDetail.jsx';
+
+describe('scan model references', () => {
+  it('keeps OpenRouter exact-ID editing available when catalog discovery fails', async () => {
+    const catalogError = new Error('catalog unavailable');
+    const references = await loadModelReferences(
+      async () => ({ providers: ['openrouter'] }),
+      async () => {
+        throw catalogError;
+      }
+    );
+
+    expect(references).toEqual({ providers: ['openrouter'], catalog: {}, catalogError });
+  });
+
+  it('still treats provider discovery failure as blocking', async () => {
+    await expect(
+      loadModelReferences(
+        async () => {
+          throw new Error('providers unavailable');
+        },
+        async () => ({ providers: [] })
+      )
+    ).rejects.toThrow('providers unavailable');
+  });
+});
 
 describe('scan run settings', () => {
   const current = {

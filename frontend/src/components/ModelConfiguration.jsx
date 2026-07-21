@@ -1,4 +1,4 @@
-import { forwardRef, useId } from 'react';
+import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import SearchSelect from './SearchSelect.jsx';
 import {
@@ -63,6 +63,7 @@ export default function ModelConfiguration({ value, onChange, providers, catalog
   const providerCatalog = modelCatalogForProvider(catalog, value.model_provider);
   const catalogReady = modelCatalogIsReady(catalog, value.model_provider);
   const freeTextModel = usesFreeTextModelInput(catalog, value.model_provider);
+  const suggestionsReady = providerCatalog?.status === 'ready' && selectableModels.length > 0;
   const availableEfforts = thinkingEffortsForModel(
     catalog,
     value.model_provider,
@@ -71,16 +72,26 @@ export default function ModelConfiguration({ value, onChange, providers, catalog
     value.harness
   );
   const providerName = PROVIDER_LABELS[value.model_provider] || 'selected provider';
-  const catalogMessage =
-    providerConfigured && !freeTextModel && !catalogReady
-      ? catalogError
-        ? `Could not load the ${providerName} model catalog. Model selection is unavailable.`
-        : providerCatalog?.status === 'loading'
-          ? `Loading available ${providerName} models.`
-          : providerCatalog?.status === 'ready'
-            ? `No ${providerName} models are available.`
-            : `${providerName} model catalog is unavailable.`
-      : '';
+  let catalogMessage = '';
+  if (providerConfigured && freeTextModel && !suggestionsReady) {
+    if (catalogError) {
+      catalogMessage = `Could not load ${providerName} model suggestions. You can still enter an exact model ID.`;
+    } else if (providerCatalog?.status === 'loading') {
+      catalogMessage = `Loading available ${providerName} models. You can still enter an exact model ID.`;
+    } else if (providerCatalog?.status === 'ready') {
+      catalogMessage = `No ${providerName} model suggestions are available. You can still enter an exact model ID.`;
+    } else {
+      catalogMessage = `${providerName} model suggestions are unavailable. You can still enter an exact model ID.`;
+    }
+  } else if (providerConfigured && !freeTextModel && !catalogReady) {
+    catalogMessage = catalogError
+      ? `Could not load the ${providerName} model catalog. Model selection is unavailable.`
+      : providerCatalog?.status === 'loading'
+        ? `Loading available ${providerName} models.`
+        : providerCatalog?.status === 'ready'
+          ? `No ${providerName} models are available.`
+          : `${providerName} model catalog is unavailable.`;
+  }
   const unavailableProviders = MODEL_PROVIDER_IDS.filter((provider) => !providers.includes(provider));
 
   const changeProvider = (modelProvider) => {
@@ -140,55 +151,54 @@ export default function ModelConfiguration({ value, onChange, providers, catalog
         </Field>
         <Field label="model">
           {(fieldId) => (
-            <div data-model-input-mode={freeTextModel ? 'text' : 'select'}>
-              {freeTextModel ? (
-                <Input
-                  id={fieldId}
-                  value={value.model}
-                  onChange={(event) => changeModel(event.target.value)}
-                  placeholder="provider/model-id"
-                  maxLength={200}
-                  disabled={disabled || !providerConfigured}
-                />
-              ) : (
-                <SearchSelect
-                  id={fieldId}
-                  label="Model"
-                  items={selectableModels}
-                  value={value.model}
-                  onChange={changeModel}
-                  height={38}
-                  placeholder="Filter models..."
-                  emptyText="No matching models."
-                  disabled={disabled || !providerConfigured || !catalogReady}
-                  filter={(model, query) =>
-                    !query || model.id.toLowerCase().includes(query) || model.label.toLowerCase().includes(query)
-                  }
-                  renderTrigger={(model) => (
-                    <span
-                      className="mono"
-                      style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                      {model?.label || (catalogReady ? 'Select a model' : 'Loading models...')}
+            <div data-model-input-mode={freeTextModel ? 'autocomplete' : 'select'}>
+              <SearchSelect
+                id={fieldId}
+                label="Model"
+                items={selectableModels}
+                value={value.model}
+                onChange={changeModel}
+                height={38}
+                placeholder={freeTextModel ? 'Filter models or enter an exact ID...' : 'Filter models...'}
+                emptyText={freeTextModel ? 'Type an exact model ID to use it.' : 'No matching models.'}
+                disabled={disabled || !providerConfigured || (!freeTextModel && !catalogReady)}
+                allowCustomValue={freeTextModel}
+                customValueLabel="Use exact model ID"
+                customValueMaxLength={200}
+                filter={(model, query) =>
+                  !query || model.id.toLowerCase().includes(query) || model.label.toLowerCase().includes(query)
+                }
+                renderTrigger={(model) => (
+                  <span
+                    className="mono"
+                    style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                  >
+                    {model?.label ||
+                      (freeTextModel
+                        ? 'Select or enter a model'
+                        : catalogReady
+                          ? 'Select a model'
+                          : providerCatalog?.status === 'loading'
+                            ? 'Loading models...'
+                            : 'Models unavailable')}
+                  </span>
+                )}
+                renderItem={(model) => (
+                  <span style={{ minWidth: 0 }}>
+                    <span className="mono" style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>
+                      {model.label}
                     </span>
-                  )}
-                  renderItem={(model) => (
-                    <span style={{ minWidth: 0 }}>
-                      <span className="mono" style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>
-                        {model.label}
+                    {model.label !== model.id && (
+                      <span
+                        className="mono"
+                        style={{ display: 'block', marginTop: 2, color: 'var(--text-3)', fontSize: 11 }}
+                      >
+                        {model.id}
                       </span>
-                      {model.label !== model.id && (
-                        <span
-                          className="mono"
-                          style={{ display: 'block', marginTop: 2, color: 'var(--text-3)', fontSize: 11 }}
-                        >
-                          {model.id}
-                        </span>
-                      )}
-                    </span>
-                  )}
-                />
-              )}
+                    )}
+                  </span>
+                )}
+              />
             </div>
           )}
         </Field>
@@ -281,29 +291,6 @@ function Field({ label, children }) {
     </div>
   );
 }
-
-const Input = forwardRef(function Input({ style, ...props }, ref) {
-  return (
-    <input
-      ref={ref}
-      {...props}
-      spellCheck={false}
-      className="mono"
-      style={{
-        width: '100%',
-        height: 38,
-        padding: '0 12px',
-        border: '1px solid var(--border)',
-        borderRadius: 8,
-        background: 'var(--surface)',
-        color: 'var(--text)',
-        fontSize: 13,
-        outline: 'none',
-        ...style,
-      }}
-    />
-  );
-});
 
 function ProviderSelect({ id, value, onChange, configuredProviders, disabled }) {
   return (

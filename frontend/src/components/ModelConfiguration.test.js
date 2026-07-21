@@ -28,7 +28,21 @@ const catalog = configuredModelCatalog({
       status: 'ready',
       models: [{ id: 'claude-sonnet-4', thinkingEfforts: ['medium'] }],
     },
-    { provider: 'openrouter', input: 'text', status: 'ready', models: [] },
+    {
+      provider: 'openrouter',
+      input: 'text',
+      status: 'ready',
+      defaultModel: 'z-ai/glm-5.2',
+      models: [
+        {
+          id: 'z-ai/glm-5.2',
+          label: 'Z.ai: GLM 5.2',
+          thinkingEfforts: ['high', 'xhigh'],
+          isDefault: true,
+        },
+        { id: 'moonshotai/kimi-code', label: 'Moonshot: Kimi Code', thinkingEfforts: ['default'] },
+      ],
+    },
   ],
 });
 
@@ -36,7 +50,12 @@ describe('modelConfigurationIsValid', () => {
   it('defaults to Codex, then Claude, then OpenRouter', () => {
     expect(modelConfigurationForCatalog({}, ['openrouter', 'claude', 'codex'], catalog).model_provider).toBe('codex');
     expect(modelConfigurationForCatalog({}, ['openrouter', 'claude'], catalog).model_provider).toBe('claude');
-    expect(modelConfigurationForCatalog({}, ['openrouter'], catalog).model_provider).toBe('openrouter');
+    expect(modelConfigurationForCatalog({}, ['openrouter'], catalog)).toEqual({
+      model_provider: 'openrouter',
+      model: 'z-ai/glm-5.2',
+      thinking_effort: 'high',
+      harness: 'claude-code',
+    });
   });
 
   it('accepts a catalog model with its compatible harness', () => {
@@ -47,6 +66,18 @@ describe('modelConfigurationIsValid', () => {
           model: 'gpt-5-codex',
           thinking_effort: 'high',
           harness: 'codex',
+        },
+        providers,
+        catalog
+      )
+    ).toBe(true);
+    expect(
+      modelConfigurationIsValid(
+        {
+          model_provider: 'openrouter',
+          model: 'vendor/custom-model',
+          thinking_effort: 'medium',
+          harness: 'claude-code',
         },
         providers,
         catalog
@@ -126,7 +157,7 @@ describe('modelConfigurationIsValid', () => {
     ).toBe(false);
   });
 
-  it('renders a searchable catalog selector for native providers and free text for OpenRouter', () => {
+  it('renders searchable catalogs and keeps an exact-ID escape hatch for OpenRouter', () => {
     const renderConfiguration = (value) =>
       renderToStaticMarkup(
         React.createElement(
@@ -143,7 +174,13 @@ describe('modelConfigurationIsValid', () => {
     });
     const openRouterMarkup = renderConfiguration({
       model_provider: 'openrouter',
-      model: 'vendor/model',
+      model: 'z-ai/glm-5.2',
+      thinking_effort: 'high',
+      harness: 'claude-code',
+    });
+    const customOpenRouterMarkup = renderConfiguration({
+      model_provider: 'openrouter',
+      model: 'vendor/custom-model',
       thinking_effort: 'medium',
       harness: 'claude-code',
     });
@@ -159,7 +196,41 @@ describe('modelConfigurationIsValid', () => {
     expect(codexMarkup).toContain('<option value="medium" selected="">medium</option>');
     expect(codexMarkup).toContain('<option value="high">high</option>');
     expect(codexMarkup).not.toContain('<option value="low">low</option>');
-    expect(openRouterMarkup).toContain('data-model-input-mode="text"');
-    expect(openRouterMarkup).toContain('value="vendor/model"');
+    expect(openRouterMarkup).toContain('data-model-input-mode="autocomplete"');
+    expect(openRouterMarkup).toContain('aria-haspopup="listbox"');
+    expect(openRouterMarkup).toContain('Z.ai: GLM 5.2');
+    expect(openRouterMarkup).toContain('<option value="high" selected="">high</option>');
+    expect(openRouterMarkup).toContain('<option value="xhigh">xhigh</option>');
+    expect(openRouterMarkup).not.toContain('<option value="medium">medium</option>');
+    expect(customOpenRouterMarkup).toContain('data-model-input-mode="autocomplete"');
+    expect(customOpenRouterMarkup).toContain('vendor/custom-model');
+    expect(customOpenRouterMarkup).toContain('<option value="medium" selected="">medium</option>');
+  });
+
+  it('keeps exact OpenRouter entry available when catalog suggestions are loading', () => {
+    const loadingCatalog = configuredModelCatalog({
+      providers: [{ provider: 'openrouter', input: 'text', status: 'loading', models: [] }],
+    });
+    const markup = renderToStaticMarkup(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ['/'] },
+        React.createElement(ModelConfiguration, {
+          value: {
+            model_provider: 'openrouter',
+            model: 'vendor/custom-model',
+            thinking_effort: 'medium',
+            harness: 'claude-code',
+          },
+          onChange: () => {},
+          providers: ['openrouter'],
+          catalog: loadingCatalog,
+        })
+      )
+    );
+
+    expect(markup).toContain('vendor/custom-model');
+    expect(markup).toContain('Loading available OpenRouter models. You can still enter an exact model ID.');
+    expect(markup).not.toContain('aria-haspopup="listbox" aria-expanded="false" disabled=""');
   });
 });

@@ -7,6 +7,7 @@ import { CardLinkOverlay, Spinner, ErrorState, EmptyState, Button } from '../com
 import { useModalDialog } from '../lib/useModalDialog.js';
 import { useNewestFirst, usePagination } from '../lib/usePagination.js';
 import { downloadWorkflowExport, parseWorkflowImport, WORKFLOW_IMPORT_MAX_BYTES } from '../lib/workflowTransfer.js';
+import { workflowDeleteState } from '../lib/workflow.js';
 import Pagination from '../components/Pagination.jsx';
 
 export default function Workflows() {
@@ -22,12 +23,14 @@ export default function Workflows() {
     setDialogOpen(newDialogParam === '1');
   }, [newDialogParam]);
   usePageChrome([{ label: 'Workflows', active: true }], { label: '+ New workflow', to: '/workflows?new=1' }, []);
-  const { data, loading, error, reload } = useFetch(() => api.workflows(), []);
+  const { data, loading, error, reload, setData } = useFetch(() => api.workflows(), []);
   const workflows = useNewestFirst(data);
   const workflowPages = usePagination(workflows, { pageSize: 6 });
   const importInputRef = useRef(null);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
+  const [busyWorkflowId, setBusyWorkflowId] = useState(null);
+  const [actionError, setActionError] = useState(null);
 
   const chooseWorkflowFile = () => {
     setImportError('');
@@ -55,6 +58,28 @@ export default function Workflows() {
       setImportError(messages.join(' '));
     } finally {
       setImporting(false);
+    }
+  };
+  const deleteWorkflow = async (event, workflow) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!workflowDeleteState(workflow).canDelete || busyWorkflowId !== null) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete workflow "${workflow.name}" and its configured steps? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setBusyWorkflowId(workflow.id);
+    setActionError(null);
+    try {
+      await api.deleteWorkflow(workflow.id);
+      setData((current) => (current || []).filter((item) => item.id !== workflow.id));
+    } catch (deleteError) {
+      setActionError(deleteError);
+      if (deleteError instanceof ApiError && deleteError.status === 409) reload();
+    } finally {
+      setBusyWorkflowId(null);
     }
   };
 
@@ -98,6 +123,11 @@ export default function Workflows() {
 
       {loading && <Spinner />}
       {error && <ErrorState error={error} onRetry={reload} />}
+      {actionError && (
+        <div role="alert" style={{ marginBottom: 18 }}>
+          <ErrorState error={actionError} />
+        </div>
+      )}
       {data && data.length === 0 && (
         <EmptyState
           title="No workflows yet"
@@ -109,94 +139,118 @@ export default function Workflows() {
         <>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {workflowPages.pageItems.map((w) => (
-              <div
+              <WorkflowCard
                 key={w.id}
-                style={{
-                  position: 'relative',
-                  border: '1px solid var(--border)',
-                  borderRadius: 12,
-                  padding: 18,
-                  background: 'var(--surface)',
-                  boxShadow: 'var(--shadow)',
-                  cursor: 'pointer',
-                }}
-              >
-                <CardLinkOverlay to={`/workflows/${w.id}`} label={`Open workflow ${w.name}`} />
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-                  <div>
-                    <div className="mono" style={{ fontWeight: 600, fontSize: 15.5 }}>
-                      {w.name}
-                    </div>
-                    <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5, maxWidth: 320 }}>
-                      {w.description}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 'none' }}>
-                    <Button
-                      variant="ghost"
-                      aria-label={`Export ${w.name}`}
-                      title="Export workflow as JSON"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        downloadWorkflowExport(w);
-                      }}
-                      style={{ position: 'relative', zIndex: 2, height: 27, padding: '0 9px', fontSize: 11.5 }}
-                    >
-                      Export
-                    </Button>
-                    <span
-                      className="mono"
-                      style={{
-                        fontSize: 11,
-                        color: 'var(--text-3)',
-                        border: '1px solid var(--border)',
-                        padding: '3px 8px',
-                        borderRadius: 6,
-                      }}
-                    >
-                      {w.stepCount} steps
-                    </span>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 16, flexWrap: 'wrap' }}>
-                  {w.depthChips.map((d) => (
-                    <span
-                      key={d.label}
-                      className="mono"
-                      style={{
-                        fontSize: 10.5,
-                        color: 'var(--text-2)',
-                        background: 'var(--surface-2)',
-                        padding: '3px 8px',
-                        borderRadius: 5,
-                      }}
-                    >
-                      {d.label}
-                    </span>
-                  ))}
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 20,
-                    marginTop: 16,
-                    paddingTop: 14,
-                    borderTop: '1px solid var(--border-2)',
-                    fontSize: 12,
-                    color: 'var(--text-3)',
-                  }}
-                >
-                  <span>
-                    <span style={{ color: 'var(--text)', fontWeight: 600 }}>{w.scanCount}</span> scans
-                  </span>
-                  <span>last used {w.lastUsed || '—'}</span>
-                </div>
-              </div>
+                workflow={w}
+                busy={busyWorkflowId !== null}
+                deleting={busyWorkflowId === w.id}
+                onDelete={deleteWorkflow}
+              />
             ))}
           </div>
           <Pagination {...workflowPages} itemLabel="workflows" />
         </>
       )}
+    </div>
+  );
+}
+
+export function WorkflowCard({ workflow: w, busy, deleting, onDelete }) {
+  const deleteState = workflowDeleteState(w);
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        padding: 18,
+        background: 'var(--surface)',
+        boxShadow: 'var(--shadow)',
+        cursor: 'pointer',
+      }}
+    >
+      <CardLinkOverlay to={`/workflows/${w.id}`} label={`Open workflow ${w.name}`} />
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <div className="mono" style={{ fontWeight: 600, fontSize: 15.5 }}>
+            {w.name}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5, maxWidth: 320 }}>{w.description}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 'none' }}>
+          {deleteState.canDelete && (
+            <Button
+              variant="danger"
+              aria-label={`Delete ${w.name}`}
+              title="Delete unused workflow"
+              disabled={busy}
+              onClick={(event) => onDelete(event, w)}
+              style={{ position: 'relative', zIndex: 2, height: 27, padding: '0 9px', fontSize: 11.5 }}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            aria-label={`Export ${w.name}`}
+            title="Export workflow as JSON"
+            disabled={deleting}
+            onClick={(event) => {
+              event.stopPropagation();
+              downloadWorkflowExport(w);
+            }}
+            style={{ position: 'relative', zIndex: 2, height: 27, padding: '0 9px', fontSize: 11.5 }}
+          >
+            Export
+          </Button>
+          <span
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: 'var(--text-3)',
+              border: '1px solid var(--border)',
+              padding: '3px 8px',
+              borderRadius: 6,
+            }}
+          >
+            {w.stepCount} steps
+          </span>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 16, flexWrap: 'wrap' }}>
+        {w.depthChips.map((d) => (
+          <span
+            key={d.label}
+            className="mono"
+            style={{
+              fontSize: 10.5,
+              color: 'var(--text-2)',
+              background: 'var(--surface-2)',
+              padding: '3px 8px',
+              borderRadius: 5,
+            }}
+          >
+            {d.label}
+          </span>
+        ))}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 20,
+          marginTop: 16,
+          paddingTop: 14,
+          borderTop: '1px solid var(--border-2)',
+          fontSize: 12,
+          color: 'var(--text-3)',
+        }}
+      >
+        <span>
+          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{w.scanCount}</span> scans
+        </span>
+        <span>last used {w.lastUsed || '—'}</span>
+      </div>
     </div>
   );
 }

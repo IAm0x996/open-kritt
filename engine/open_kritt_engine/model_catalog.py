@@ -22,30 +22,13 @@ from .provider_credentials import provider_environment
 
 LOGGER = logging.getLogger("open_kritt_engine")
 ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
-OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
-OPENROUTER_RECOMMENDATION_LIMIT = 10
-OPENROUTER_FEATURED_MODEL_IDS = (
-    "z-ai/glm-5.2",
-    "moonshotai/kimi-k2.7-code",
-    "sakana/fugu-ultra",
-)
-OPENROUTER_EXCLUDED_PROVIDER_PREFIXES = ("anthropic/", "openai/")
-OPENROUTER_FEATURED_FAMILY_PREFIXES = ("moonshotai/kimi-", "~moonshotai/kimi-", "z-ai/glm-")
-OPENROUTER_EXPENSIVE_MODEL_IDS = frozenset({"sakana/fugu-ultra"})
-OPENROUTER_CODING_TERMS = (
-    "coding",
-    "codebase",
-    "software engineering",
-    "programming",
-    "developer",
-    "cyber",
-    "security",
-    "vulnerabil",
-)
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models/user"
+OPENROUTER_DEFAULT_MODEL_ID = "z-ai/glm-5.2"
 CATALOG_REFRESH_ERROR = "Unable to refresh the provider model catalog."
 MAX_CATALOG_MODELS = 500
 MAX_CATALOG_PAGES = 10
 MAX_JSONL_BUFFER_BYTES = 5 * 1024 * 1024
+MAX_HTTP_CATALOG_BYTES = 5 * 1024 * 1024
 THINKING_EFFORT_ORDER = ("default", "low", "medium", "high", "xhigh", "max", "ultra")
 SUPPORTED_THINKING_EFFORTS = frozenset(THINKING_EFFORT_ORDER)
 OPENROUTER_GATEWAY_EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -122,6 +105,18 @@ def _openrouter_thinking_efforts(entry: Mapping[str, Any]) -> list[str]:
         # OpenRouter documents null as accepting every gateway effort value.
         return list(OPENROUTER_GATEWAY_EFFORTS)
     return _thinking_efforts(reasoning.get("supported_efforts")) or ["default"]
+
+
+def _openrouter_is_text_model(entry: Mapping[str, Any]) -> bool:
+    """Reject models explicitly limited to non-text output."""
+
+    architecture = entry.get("architecture")
+    if not isinstance(architecture, Mapping):
+        return True
+    output_modalities = architecture.get("output_modalities")
+    if not isinstance(output_modalities, list):
+        return True
+    return "text" in {_clean_text(modality).lower() for modality in output_modalities}
 
 
 def normalize_catalog_models(entries: Any) -> tuple[list[dict[str, Any]], str]:
@@ -399,76 +394,48 @@ def fetch_anthropic_models(api_key: str, timeout_seconds: float) -> tuple[list[d
 
 
 def fetch_openrouter_models(api_key: str, timeout_seconds: float) -> tuple[list[dict[str, Any]], str]:
-    """Return the ten most-popular OpenRouter models oriented to code and security work."""
+    """List text models available under the configured OpenRouter account policy."""
 
     request = Request(
-        f"{OPENROUTER_MODELS_URL}?{urlencode({'sort': 'most-popular'})}",
+        OPENROUTER_MODELS_URL,
         headers={"Authorization": f"Bearer {api_key}"},
     )
     try:
         with urlopen(request, timeout=max(1.0, timeout_seconds)) as response:  # noqa: S310 - fixed provider URL
-            payload = json.load(response)
-    except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+            raw_payload = response.read(MAX_HTTP_CATALOG_BYTES + 1)
+        if len(raw_payload) > MAX_HTTP_CATALOG_BYTES:
+            raise ModelCatalogError("OpenRouter model catalog response was too large")
+        payload = json.loads(raw_payload)
+    except (HTTPError, URLError, OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ModelCatalogError("Could not read the OpenRouter model catalog") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         raise ModelCatalogError("OpenRouter model catalog response was invalid")
 
-    available = {
-        model_id: raw
-        for raw in payload["data"]
-        if isinstance(raw, Mapping) and (model_id := _clean_text(raw.get("id")))
-    }
-    ordered: list[Mapping[str, Any]] = []
-    seen_ids: set[str] = set()
-
-    def add(raw: Mapping[str, Any] | None, *, require_coding_term: bool = True) -> None:
-        if not raw:
-            return
-        model_id = _clean_text(raw.get("id"))
-        if (
-            not model_id
-            or model_id in seen_ids
-            or model_id.startswith(OPENROUTER_EXCLUDED_PROVIDER_PREFIXES)
-            or (
-                require_coding_term
-                and model_id not in OPENROUTER_FEATURED_MODEL_IDS
-                and model_id.startswith(OPENROUTER_FEATURED_FAMILY_PREFIXES)
-            )
-        ):
-            return
-        searchable = " ".join(str(raw.get(field) or "").lower() for field in ("id", "name", "description"))
-        if require_coding_term and not any(term in searchable for term in OPENROUTER_CODING_TERMS):
-            return
-        seen_ids.add(model_id)
-        ordered.append(raw)
-
-    for model_id in OPENROUTER_FEATURED_MODEL_IDS:
-        add(available.get(model_id), require_coding_term=False)
-    for raw in payload["data"]:
-        if not isinstance(raw, Mapping):
-            continue
-        add(raw)
-        if len(ordered) >= OPENROUTER_RECOMMENDATION_LIMIT:
-            break
-
     entries: list[dict[str, Any]] = []
-    for raw in ordered[:OPENROUTER_RECOMMENDATION_LIMIT]:
+    seen_ids: set[str] = set()
+    for raw in payload["data"]:
+        if not isinstance(raw, Mapping) or not _openrouter_is_text_model(raw):
+            continue
         model_id = _clean_text(raw.get("id"))
-        display_name = raw.get("name")
-        if model_id in OPENROUTER_EXPENSIVE_MODEL_IDS:
-            display_name = f"{display_name or model_id} — expensive"
+        if not model_id or model_id in seen_ids:
+            continue
+        seen_ids.add(model_id)
         entries.append(
             {
                 "model": model_id,
-                "displayName": display_name,
+                "displayName": raw.get("name"),
                 "supportedReasoningEfforts": _openrouter_thinking_efforts(raw),
-                "isDefault": not entries,
+                "isDefault": model_id == OPENROUTER_DEFAULT_MODEL_ID,
             }
         )
+        if len(entries) > MAX_CATALOG_MODELS:
+            candidate = entries.pop()
+            if candidate["isDefault"] and not any(entry["isDefault"] for entry in entries):
+                entries[-1] = candidate
 
     models, default_model = normalize_catalog_models(entries)
     if not models:
-        raise ModelCatalogError("OpenRouter coding model catalog was empty")
+        raise ModelCatalogError("OpenRouter model catalog was empty")
     return models, default_model
 
 
@@ -476,7 +443,7 @@ CatalogFetcher = Callable[[], tuple[list[dict[str, Any]], str]]
 
 
 class ModelCatalogRefresher:
-    """Fetch configured native-provider catalogs and persist only safe fields."""
+    """Fetch configured provider catalogs and persist only safe fields."""
 
     def __init__(
         self,

@@ -318,10 +318,13 @@ test('shared model availability enforces native catalogs and leaves OpenRouter u
 
   await assert.doesNotReject(() =>
     assertModelSelectionAvailable(
-      { modelProvider: 'openrouter', model: 'vendor/model' },
+      { modelProvider: 'openrouter', model: 'custom/not-in-catalog' },
       {
         providerConfigured: async () => true,
-        getCatalog: async () => ({ models: [] }),
+        getCatalog: async () => ({
+          models: [{ id: 'vendor/catalog-suggestion', thinkingEfforts: ['medium'] }],
+          defaultModel: 'vendor/catalog-suggestion',
+        }),
       }
     )
   );

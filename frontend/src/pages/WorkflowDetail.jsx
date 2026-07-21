@@ -1,18 +1,21 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { api } from '../api/client.js';
+import { useNavigate, useParams } from 'react-router-dom';
+import { api, ApiError } from '../api/client.js';
 import { useFetch } from '../lib/useFetch.js';
 import { usePageChrome } from '../context/ui.jsx';
 import { Spinner, ErrorState, Button } from '../components/ui.jsx';
 import { PromptHighlight } from '../components/PromptEditor.jsx';
 import Drawer from '../components/Drawer.jsx';
-import { availableKeysForDepth, groupByDepth } from '../lib/workflow.js';
+import { availableKeysForDepth, groupByDepth, workflowDeleteState } from '../lib/workflow.js';
 import { parseTemplateRefs, refResolves } from '../lib/keys.js';
 import { downloadWorkflowExport } from '../lib/workflowTransfer.js';
 
 export default function WorkflowDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [selStepId, setSelStepId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [actionError, setActionError] = useState(null);
   const { data: wf, loading, error, reload } = useFetch(() => api.workflow(id), [id]);
 
   usePageChrome(
@@ -40,9 +43,28 @@ export default function WorkflowDetail() {
 
   const levels = groupByDepth(wf.steps);
   const sel = wf.steps.find((s) => s.id === selStepId);
+  const deleteState = workflowDeleteState(wf);
   const editWorkflowPath = (stepId) => {
     const stepQuery = stepId ? `?step=${encodeURIComponent(stepId)}` : '';
     return `/workflows/${wf.id}/edit${stepQuery}`;
+  };
+  const deleteWorkflow = async () => {
+    if (!deleteState.canDelete || deleting) return;
+    const confirmed = window.confirm(
+      `Permanently delete workflow "${wf.name}" and its configured steps? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setActionError(null);
+    try {
+      await api.deleteWorkflow(wf.id);
+      navigate('/workflows', { replace: true });
+    } catch (deleteError) {
+      setActionError(deleteError);
+      setDeleting(false);
+      if (deleteError instanceof ApiError && deleteError.status === 409) reload();
+    }
   };
 
   return (
@@ -56,17 +78,46 @@ export default function WorkflowDetail() {
             <div style={{ fontSize: 13.5, color: 'var(--text-2)', marginTop: 4, maxWidth: 520 }}>{wf.description}</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button variant="ghost" style={{ height: 32 }} to={`/scans/new?workflow=${wf.id}`}>
+            <Button variant="ghost" style={{ height: 32 }} to={`/scans/new?workflow=${wf.id}`} disabled={deleting}>
               Run scan
             </Button>
-            <Button variant="ghost" style={{ height: 32 }} onClick={() => downloadWorkflowExport(wf)}>
+            <Button
+              variant="ghost"
+              style={{ height: 32 }}
+              disabled={deleting}
+              onClick={() => downloadWorkflowExport(wf)}
+            >
               Export JSON
             </Button>
-            <Button variant="subtle" style={{ height: 32 }} to={editWorkflowPath()}>
+            <Button variant="subtle" style={{ height: 32 }} to={editWorkflowPath()} disabled={deleting}>
               Edit
             </Button>
+            {!wf.isDefault && (
+              <Button
+                variant="danger"
+                style={{ height: 32 }}
+                disabled={!deleteState.canDelete || deleting}
+                title={deleteState.canDelete ? 'Delete unused workflow' : deleteState.reason}
+                aria-describedby={!deleteState.canDelete ? 'workflow-delete-reason' : undefined}
+                onClick={deleteWorkflow}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </Button>
+            )}
           </div>
         </div>
+
+        {!wf.isDefault && !deleteState.canDelete && (
+          <div id="workflow-delete-reason" style={{ color: 'var(--text-3)', fontSize: 12, textAlign: 'right' }}>
+            {deleteState.reason}
+          </div>
+        )}
+
+        {actionError && (
+          <div role="alert" style={{ marginTop: 18 }}>
+            <ErrorState error={actionError} />
+          </div>
+        )}
 
         <div
           className="mono"

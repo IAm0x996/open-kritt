@@ -58,9 +58,9 @@ function normalizedModel(model) {
   };
 }
 
-// The model catalog contains only configured providers. Native providers use
-// bounded catalogs; OpenRouter remains unrestricted because its catalog is too
-// broad for a useful selector.
+// The model catalog contains only configured providers. OpenRouter's catalog is
+// advisory: its text input keeps accepting exact IDs while the cached entries
+// provide searchable suggestions and per-model reasoning metadata.
 export function configuredModelCatalog(payload) {
   const providers = Array.isArray(payload?.providers) ? payload.providers : [];
   const catalog = {};
@@ -106,15 +106,19 @@ export function modelsForModelProvider(catalog, provider) {
   return modelCatalogForProvider(catalog, provider)?.models || [];
 }
 
-export function usesFreeTextModelInput(_catalog, provider) {
-  return normalizedProviderId(provider) === 'openrouter';
+export function usesFreeTextModelInput(catalog, provider) {
+  const normalizedProvider = normalizedProviderId(provider);
+  const providerCatalog = modelCatalogForProvider(catalog, normalizedProvider);
+  return providerCatalog?.input === 'text' || (!providerCatalog && normalizedProvider === 'openrouter');
 }
 
 export function modelCatalogIsReady(catalog, provider) {
-  if (usesFreeTextModelInput(catalog, provider)) return true;
-
   const providerCatalog = modelCatalogForProvider(catalog, provider);
-  return providerCatalog?.input === 'select' && providerCatalog.status === 'ready' && providerCatalog.models.length > 0;
+  return (
+    ['select', 'text'].includes(providerCatalog?.input) &&
+    providerCatalog.status === 'ready' &&
+    providerCatalog.models.length > 0
+  );
 }
 
 export function isModelSelectionValid(model, catalog, provider) {
@@ -127,14 +131,11 @@ export function isModelSelectionValid(model, catalog, provider) {
 }
 
 function defaultCatalogModel(catalog, provider) {
-  const providerCatalog = modelCatalogForProvider(catalog, provider);
-  if (providerCatalog?.defaultModel) return providerCatalog.defaultModel;
-  if (normalizedProviderId(provider) === 'openrouter') return defaultModelForModelProvider(provider);
-  return '';
+  return modelCatalogForProvider(catalog, provider)?.defaultModel || '';
 }
 
-// A provider switch chooses the destination catalog default. Native providers
-// retain a selection only while it remains present in their current catalog.
+// A provider switch chooses the destination catalog default. OpenRouter keeps
+// an existing exact ID because its dynamically discovered catalog is advisory.
 export function modelForCatalogChange(model, previousProvider, nextProvider, catalog) {
   const previous = normalizedProviderId(previousProvider);
   const next = normalizedProviderId(nextProvider);
@@ -142,7 +143,7 @@ export function modelForCatalogChange(model, previousProvider, nextProvider, cat
   const switchedProvider = previous !== next;
 
   if (usesFreeTextModelInput(catalog, next)) {
-    return switchedProvider ? defaultCatalogModel(catalog, next) || currentModel : `${model || ''}`;
+    return switchedProvider || !currentModel ? defaultCatalogModel(catalog, next) : `${model || ''}`;
   }
 
   if (!modelCatalogIsReady(catalog, next)) return '';
@@ -155,15 +156,16 @@ export function thinkingEffortsForModel(catalog, provider, model, fallback, harn
   const fallbackEfforts = providerEfforts || (Array.isArray(fallback) ? fallback : []);
   const selectedHarness = normalizedString(harness) || defaultHarnessForModelProvider(provider);
   const harnessEfforts = HARNESS_THINKING_EFFORTS[selectedHarness] || [];
-
-  if (usesFreeTextModelInput(catalog, provider)) {
-    return fallbackEfforts.filter((effort) => harnessEfforts.includes(effort));
-  }
-  if (!modelCatalogIsReady(catalog, provider)) return [];
-
   const selected = modelsForModelProvider(catalog, provider).find(
     (candidate) => candidate.id === normalizedString(model)
   );
+
+  if (usesFreeTextModelInput(catalog, provider)) {
+    const efforts = selected?.thinkingEfforts?.length ? selected.thinkingEfforts : fallbackEfforts;
+    return efforts.filter((effort) => harnessEfforts.includes(effort));
+  }
+  if (!modelCatalogIsReady(catalog, provider)) return [];
+
   return (selected?.thinkingEfforts || []).filter((effort) => harnessEfforts.includes(effort));
 }
 
