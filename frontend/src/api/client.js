@@ -146,6 +146,7 @@ export const api = {
   updateVulnerability: (id, body) => request(`/vulnerabilities/${id}`, { method: 'PATCH', body }),
   // local repos available to scan
   localRepos: () => request('/local-repos'),
+  localRepoStats: (name, options) => request(`/local-repos/${encodeURIComponent(name)}/stats`, options),
   // post-scripts
   postScripts: () => request('/post-scripts'),
   postScript: (id) => request(`/post-scripts/${id}`),

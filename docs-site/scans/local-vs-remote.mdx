@@ -51,6 +51,27 @@ entire scan, including resumed work; create a new scan to capture changes made a
 the folder is a Git repository, branch and commit metadata may still appear for context, but
 they do not define the snapshot contents.
 
+### File-count preflight
+
+After you select a local folder, the scan form shows its current file count. The count covers
+all nested non-directory entries found during preflight, including Git-ignored, modified, and
+untracked files. Entries named `.git` are excluded. Symbolic links are counted as entries but
+are not followed, so a link does not cause files beneath its target to be counted again. If the
+preflight encounters an absolute or out-of-root symbolic link, socket, FIFO, device, or another
+special file that the snapshot cannot safely copy, the form warns that the scan is expected to
+fail before analysis.
+
+If the configuration contains a positive `max_files` value, the form compares the count with
+that value. This comparison is advisory: `max_files` is a workflow-defined configuration key,
+not an engine-enforced limit. Whether exceeding it matters depends on how the selected workflow
+uses `{{configuration}}`.
+
+The count describes the mounted folder when it was inspected. Files can change before the
+engine takes the scan's fixed snapshot, so treat it as a preflight estimate rather than a
+guarantee of the eventual snapshot size. For an unusually large tree, counting stops at a
+safety ceiling and the form labels the result as a lower bound with “At least”; entries beyond
+that point have not been counted or checked for snapshot compatibility.
+
 <Warning>
   The selected model provider receives the local snapshot contents during analysis. Because modified and untracked files
   are included, review the folder for credentials or other sensitive files before starting the scan.

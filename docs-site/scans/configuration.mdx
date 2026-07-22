@@ -24,7 +24,10 @@ A typical starting value:
 
 A prompt can then say "respect the limits in `{{configuration}}`" and the agent will see
 those values. open·kritt doesn't enforce a schema - the meaning of each key is whatever
-your workflow decides to make of it.
+your workflow decides to make of it. For local targets, the scan form uses a positive
+`max_files` value for an advisory comparison with the folder's current
+[file count](/scans/local-vs-remote#file-count-preflight). The engine does not enforce that
+value; the selected workflow decides what exceeding it means.
 
 ## Engine-recognized keys
 
