@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0](https://github.com/Kritt-ai/open-kritt/compare/v1.1.0...v1.2.0) (2026-07-23)
+
+
+### Features
+
+* added malicious actor in findings view ([7bc3dbc](https://github.com/Kritt-ai/open-kritt/commit/7bc3dbc1656113db3c3e41ce79e27015a3f928ed))
+* added model per scan depth selection ([f50c46e](https://github.com/Kritt-ai/open-kritt/commit/f50c46eb85578817c11d708333ec85bd562df6e6))
+
+
+### Bug Fixes
+
+* added file count when using local repos and search when looking up skills in a scan ([adf6e9e](https://github.com/Kritt-ai/open-kritt/commit/adf6e9ed6ac2a767af71c9f0a0fb1c54f0e9680a))
+* added unused workflow deletion and model catalog for open router ([8f1ae00](https://github.com/Kritt-ai/open-kritt/commit/8f1ae0069443adffd651b76db8cff3485573afa9))
+* edit model ui crash issue fix ([545e0ed](https://github.com/Kritt-ai/open-kritt/commit/545e0ed4686d7bf66d9ad31e64e905e1653f94a4))
+* fixed scan model update issue ([5644f7a](https://github.com/Kritt-ai/open-kritt/commit/5644f7aca73eada9e60ab0459c917df7d0005263))
+
 ## [1.1.0](https://github.com/Kritt-ai/open-kritt/compare/v1.0.0...v1.1.0) (2026-07-20)
 
 
