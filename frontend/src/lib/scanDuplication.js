@@ -1,3 +1,5 @@
+import { modelOverridesDraft } from './modelOverrides.js';
+
 const CONFIGURATION_RELATION_KEYS = ['post_script_ids', 'post_scripts', 'agent_skill_ids', 'agent_skills'];
 
 function uniqueIds(values) {
@@ -66,6 +68,7 @@ export function scanConfigurationDraft(scan) {
     model_provider: `${scan.modelProvider ?? ''}`,
     harness: `${scan.harness ?? ''}`,
     thinking_effort: `${scan.thinkingEffort ?? ''}`,
+    model_overrides: modelOverridesDraft(scan.modelOverrides),
     extra: duplicateExtra(scan.extra),
     // Scan records store only the effective combined ranker text, not the
     // original ranker ids. Keep that exact ruleset as editable custom rules.

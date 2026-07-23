@@ -74,6 +74,32 @@ class ExecutorViewSummaryTests(unittest.TestCase):
         self.assertNotIn("renderAccounts", server.HTML)
         self.assertIn('id="queue"', server.HTML)
 
+    def test_pending_jobs_show_the_model_configuration_resolved_for_their_depth(self):
+        scan = {
+            "model": "gpt-5-codex",
+            "model_provider": "codex",
+            "harness": "codex",
+            "thinking_effort": "high",
+            "model_overrides": {
+                "1": {
+                    "model": "claude-sonnet",
+                    "model_provider": "claude",
+                    "harness": "claude-code",
+                    "thinking_effort": "medium",
+                }
+            },
+        }
+        job = server.job_from_state(
+            {"id": 7, "name": "Investigate", "depth": 1},
+            {"prev_id": 4, "prev_table": "workflows.step_results", "repeat_run": 1},
+            scan,
+        )
+
+        self.assertEqual(job["model"], "claude-sonnet")
+        self.assertEqual(job["modelProvider"], "claude")
+        self.assertEqual(job["harness"], "claude-code")
+        self.assertEqual(server.scan_model_configuration(scan, 0)["model"], "gpt-5-codex")
+
     def test_public_bind_requires_auth_even_for_a_loopback_host_header(self):
         self.assertTrue(server.bind_address_is_loopback("localhost"))
         self.assertTrue(server.bind_address_is_loopback("127.0.0.1"))

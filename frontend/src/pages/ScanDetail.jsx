@@ -18,10 +18,11 @@ import { configuredModelCatalog, configuredModelProviders } from '../lib/modelPr
 import { createLatestFieldMutationQueue } from '../lib/latestMutation.js';
 import { duplicateScanPath } from '../lib/scanDuplication.js';
 import { useUnsavedChangesPrompt } from '../lib/useUnsavedChangesPrompt.js';
-import ModelConfiguration, {
-  modelConfigurationForCatalog,
-  modelConfigurationIsValid,
-} from '../components/ModelConfiguration.jsx';
+import WorkflowModelConfiguration, {
+  workflowModelConfigurationForCatalog,
+  workflowModelConfigurationIsValid,
+} from '../components/WorkflowModelConfiguration.jsx';
+import { modelOverridesDraft, modelOverridesEqual, reconcileModelOverrides } from '../lib/modelOverrides.js';
 import { usePagination } from '../lib/usePagination.js';
 import Pagination from '../components/Pagination.jsx';
 
@@ -253,8 +254,11 @@ export default function ScanDetail() {
             <div className="mono" style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 7 }}>
               {scan.workflowName} · {scan.modelProvider ? `${scan.modelProvider} · ` : ''}
               {scan.model} · {scan.harness}
-              {scan.thinkingEffort ? ` · ${scan.thinkingEffort}` : ''} ·{' '}
-              {scan.repoKind === 'local' ? 'local snapshot' : `@${scan.commitShort}`}
+              {scan.thinkingEffort ? ` · ${scan.thinkingEffort}` : ''}
+              {Object.keys(scan.modelOverrides || {}).length
+                ? ` · ${Object.keys(scan.modelOverrides).length} depth overrides`
+                : ''}{' '}
+              · {scan.repoKind === 'local' ? 'local snapshot' : `@${scan.commitShort}`}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -853,21 +857,30 @@ function ScanRunSettings({
   const activeDraft = mergeRunSettingsDraft(current, draft);
   const payload = draft ? runSettingsPayload(draft, current) : {};
   const dirty = Object.keys(payload).length > 0;
+  const workflowDepths = Array.isArray(scan.workflowDepths)
+    ? scan.workflowDepths
+    : Object.keys(current.model_overrides).map(Number);
   const jobLimit = activeDraft.job_limit.trim();
   const jobLimitValid = !jobLimit || (/^\d+$/.test(jobLimit) && Number(jobLimit) >= 1 && Number(jobLimit) <= 1_000_000);
   const valid =
-    jobLimitValid && !!references && modelConfigurationIsValid(activeDraft, references.providers, references.catalog);
+    jobLimitValid &&
+    !!references &&
+    workflowModelConfigurationIsValid(activeDraft, workflowDepths, references.providers, references.catalog);
   useUnsavedChangesPrompt(editing && (dirty || saving));
 
   const open = () => {
     const currentDraft = runSettingsDraft(scan);
+    const reconciledDraft = {
+      ...currentDraft,
+      model_overrides: reconcileModelOverrides(currentDraft.model_overrides, workflowDepths, currentDraft),
+    };
     setDraft(
       references
         ? mergeRunSettingsDraft(
-            currentDraft,
-            modelConfigurationForCatalog(currentDraft, references.providers, references.catalog)
+            reconciledDraft,
+            workflowModelConfigurationForCatalog(reconciledDraft, references.providers, references.catalog)
           )
-        : currentDraft
+        : reconciledDraft
     );
     setError(null);
     setEditing(true);
@@ -975,7 +988,7 @@ function ScanRunSettings({
 
       {editing ? (
         <>
-          <ModelConfiguration
+          <WorkflowModelConfiguration
             value={activeDraft}
             onChange={(nextDraft) =>
               setDraft((currentDraft) => mergeRunSettingsDraft(currentDraft || current, nextDraft))
@@ -984,6 +997,7 @@ function ScanRunSettings({
             catalog={references?.catalog || {}}
             catalogError={catalogError}
             disabled={saving}
+            depths={workflowDepths}
           />
           <label style={{ display: 'block', maxWidth: 280, marginTop: 13 }}>
             <span
@@ -1057,6 +1071,7 @@ function ScanRunSettings({
           <RuntimeSetting label="model_provider" value={current.model_provider || '—'} />
           <RuntimeSetting label="thinking_effort" value={current.thinking_effort || '—'} />
           <RuntimeSetting label="harness" value={current.harness} />
+          <RuntimeSetting label="depth overrides" value={Object.keys(current.model_overrides).length || 'none'} />
           <RuntimeSetting
             label="model jobs"
             value={`${scan.jobsStarted || 0} / ${scan.jobLimit == null ? 'unlimited' : scan.jobLimit}`}
@@ -1073,6 +1088,7 @@ export function runSettingsDraft(scan = {}) {
     model_provider: scan.modelProvider || 'openrouter',
     thinking_effort: scan.thinkingEffort || 'medium',
     harness: scan.harness || 'codex',
+    model_overrides: modelOverridesDraft(scan.modelOverrides),
     job_limit: scan.jobLimit == null ? '' : `${scan.jobLimit}`,
   };
 }
@@ -1084,11 +1100,13 @@ function runSettingsValue(value, fallback) {
 }
 
 export function mergeRunSettingsDraft(current = {}, patch = {}) {
+  const hasModelOverrides = Object.prototype.hasOwnProperty.call(patch || {}, 'model_overrides');
   const base = {
     model: runSettingsValue(current?.model, ''),
     model_provider: runSettingsValue(current?.model_provider, 'openrouter'),
     thinking_effort: runSettingsValue(current?.thinking_effort, 'medium'),
     harness: runSettingsValue(current?.harness, 'codex'),
+    model_overrides: modelOverridesDraft(current?.model_overrides),
     job_limit: runSettingsValue(current?.job_limit, ''),
   };
   return {
@@ -1096,6 +1114,7 @@ export function mergeRunSettingsDraft(current = {}, patch = {}) {
     model_provider: runSettingsValue(patch?.model_provider, base.model_provider),
     thinking_effort: runSettingsValue(patch?.thinking_effort, base.thinking_effort),
     harness: runSettingsValue(patch?.harness, base.harness),
+    model_overrides: hasModelOverrides ? modelOverridesDraft(patch.model_overrides) : base.model_overrides,
     job_limit: runSettingsValue(patch?.job_limit, base.job_limit),
   };
 }
@@ -1112,6 +1131,8 @@ export function runSettingsPayload(draft, current) {
   if (normalizedDraft.thinking_effort !== normalizedCurrent.thinking_effort)
     payload.thinking_effort = normalizedDraft.thinking_effort;
   if (normalizedDraft.harness !== normalizedCurrent.harness) payload.harness = normalizedDraft.harness;
+  if (!modelOverridesEqual(normalizedDraft.model_overrides, normalizedCurrent.model_overrides))
+    payload.model_overrides = normalizedDraft.model_overrides;
   if (normalizedDraft.job_limit !== normalizedCurrent.job_limit) payload.jobLimit = jobLimit ? Number(jobLimit) : null;
   return payload;
 }

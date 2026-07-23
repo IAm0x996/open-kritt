@@ -21,7 +21,7 @@ from open_kritt_engine.harnesses import (
     HarnessOutput,
     HarnessResult,
 )
-from open_kritt_engine.models import Job, State, Step, StepResultRow, Workflow
+from open_kritt_engine.models import Job, State, Step, StepResultRow, Workflow, model_selection_for_depth
 from open_kritt_engine.post_processing import (
     PostProcessor,
     PostProcessRateLimited,
@@ -108,6 +108,27 @@ def scan(configuration=None):
         "model": "test-model",
         "harness": "codex",
     }
+
+
+def test_model_selection_resolves_depth_override_and_keeps_default_for_post_processing():
+    configured = {
+        **scan(),
+        "model_provider": "codex",
+        "thinking_effort": "high",
+        "model_overrides": {
+            "1": {
+                "model": "claude-sonnet",
+                "model_provider": "claude",
+                "harness": "claude-code",
+                "thinking_effort": "medium",
+            }
+        },
+    }
+
+    assert model_selection_for_depth(configured, 1).model == "claude-sonnet"
+    assert model_selection_for_depth(configured, 1).model_provider == "claude"
+    assert model_selection_for_depth(configured, 0).model == "test-model"
+    assert model_selection_for_depth(configured).model == "test-model"
 
 
 def fake_cache_git_head(path):
@@ -2006,6 +2027,68 @@ def test_worker_does_not_claim_more_jobs_for_paused_scan():
     assert fake_db.loaded_scan_count == 1
 
 
+def test_worker_dispatches_each_job_with_its_depth_model_selection(monkeypatch):
+    configured_scan = {
+        **scan(),
+        "status": "running",
+        "model_provider": "codex",
+        "thinking_effort": "high",
+        "model_overrides": {
+            "0": {
+                "model": "claude-sonnet",
+                "model_provider": "claude",
+                "harness": "claude-code",
+                "thinking_effort": "medium",
+            }
+        },
+    }
+
+    class PendingDb:
+        @contextmanager
+        def connect(self):
+            yield FakeConn()
+
+        def load_workflow(self, _conn, workflow_id):
+            return Workflow(id=workflow_id, name="wf", steps=(step(1, 0),))
+
+        def load_scan(self, _conn, _scan_id):
+            return configured_scan
+
+        def load_completed_metadata(self, *_args):
+            return set()
+
+        def load_claimed_metadata(self, *_args):
+            return set()
+
+        def load_step_results(self, *_args):
+            return {}
+
+    worker = Worker(SimpleNamespace(data_dir="/tmp", database_url=""), db=PendingDb())
+    selected = {}
+    selected_harness = object()
+
+    monkeypatch.setattr(worker, "_worker_can_pick_job", lambda _worker_id: True)
+    monkeypatch.setattr(worker, "_ensure_scan_cache_prewarmed", lambda *_args, **_kwargs: False)
+
+    def harness_for_selection(selection):
+        selected["harness_selection"] = selection
+        return selected_harness
+
+    def execute_job(**kwargs):
+        selected["execution_selection"] = kwargs["model_selection"]
+        selected["harness"] = kwargs["harness"]
+        return True
+
+    monkeypatch.setattr(worker, "_harness_for_model_selection", harness_for_selection)
+    monkeypatch.setattr(worker, "execute_job", execute_job)
+
+    assert worker.process_scan(configured_scan) is True
+    assert selected["execution_selection"].model == "claude-sonnet"
+    assert selected["execution_selection"].model_provider == "claude"
+    assert selected["harness_selection"] == selected["execution_selection"]
+    assert selected["harness"] is selected_harness
+
+
 def test_execute_job_rechecks_scan_status_after_waiting_for_workspace_slot(monkeypatch):
     class PausedDb(FakeDb):
         def load_scan(self, _conn, _scan_id):
@@ -2164,7 +2247,12 @@ def test_worker_retries_strict_validation_then_writes_results(monkeypatch, tmp_p
         SimpleNamespace(retry_count=2, data_dir="/tmp", github_token=None),
         db=fake_db,
     )
-    monkeypatch.setattr(worker_module, "prepare_dependency_workspace", lambda **_kwargs: prepared)
+    workspace_requests = []
+    monkeypatch.setattr(
+        worker_module,
+        "prepare_dependency_workspace",
+        lambda **kwargs: workspace_requests.append(kwargs) or prepared,
+    )
     job = Job(
         step=step(1, 0, multi=False, output_format='{"thing":"string"}'),
         state=State(prev_id=0, prev_table=None, repeat_run=2, context={"repo_full": "owner/repo"}),
@@ -2177,8 +2265,21 @@ def test_worker_retries_strict_validation_then_writes_results(monkeypatch, tmp_p
         ]
     )
 
+    configured_scan = {
+        **scan(),
+        "model_provider": "codex",
+        "thinking_effort": "high",
+        "model_overrides": {
+            "0": {
+                "model": "claude-sonnet",
+                "model_provider": "claude",
+                "harness": "claude-code",
+                "thinking_effort": "medium",
+            }
+        },
+    }
     worker.execute_job(
-        scan=scan(),
+        scan=configured_scan,
         workflow_id=3,
         job=job,
         harness=fake_harness,
@@ -2197,6 +2298,13 @@ def test_worker_retries_strict_validation_then_writes_results(monkeypatch, tmp_p
         {"scan_id": 7, "step_id": 1, "prev_id": 0, "prev_table": None, "repeat_run": 2}
     ]
     assert fake_harness.calls[0]["repo_dir"] == "/tmp/repo"
+    assert fake_harness.calls[0]["model"] == "claude-sonnet"
+    assert fake_harness.calls[0]["thinking_effort"] == "medium"
+    assert workspace_requests[0]["harness_name"] == "claude-code"
+    assert workspace_requests[0]["model_provider"] == "claude"
+    assert fake_db.metadata[0]["model"] == "claude-sonnet"
+    assert fake_db.metadata[0]["harness"] == "claude-code"
+    assert fake_db.metadata[0]["model_provider"] == "claude"
     assert fake_db.step_results[0]["json_answer"] == {"thing": "ok"}
     assert not root.exists()
 

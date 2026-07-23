@@ -31,6 +31,7 @@ from .harnesses import (
 )
 from .model_catalog import ModelCatalogRefresher
 from .model_output_artifacts import record_model_error_output
+from .models import ModelSelection, model_selection_for_depth
 from .post_processing import PostProcessor, PostProcessRateLimited
 from .prompting import harness_prompt, native_agent_skills_prompt, render_prompt, repeat_append_prompt
 from .provider_credentials import provider_environment
@@ -358,6 +359,15 @@ class Worker:
             data_dir=getattr(self.config, "data_dir", None),
             minimum=60,
             maximum=86400,
+        )
+
+    def _harness_for_model_selection(self, selection: ModelSelection):
+        return harness_for(
+            normalize_harness_name(selection.harness),
+            timeout_seconds=self.runtime_harness_timeout_seconds(),
+            model_provider=selection.model_provider,
+            codex_model_provider=getattr(self.config, "codex_model_provider", None),
+            codex_cli_gate=self.codex_cli_gate,
         )
 
     def recover_orphaned_metadata(self, engine_started_at):
@@ -856,14 +866,6 @@ class Worker:
             if needs_new_container and not self._new_scan_container_allowed(scan_id):
                 return did_work
 
-            harness = harness_for(
-                normalize_harness_name(current["harness"]),
-                timeout_seconds=self.runtime_harness_timeout_seconds(),
-                model_provider=scan_model_provider(current),
-                codex_model_provider=getattr(self.config, "codex_model_provider", None),
-                codex_cli_gate=self.codex_cli_gate,
-            )
-
             if current["status"] == PREWARMING_SCAN_STATUS:
                 if self._ensure_scan_cache_prewarmed(current, restore_status="running"):
                     did_work = True
@@ -880,6 +882,7 @@ class Worker:
                     continue
                 if not self._worker_can_pick_job(worker_id):
                     return did_work
+                harness = self._harness_for_model_selection(model_selection_for_depth(current))
                 did_post_work = self.post_processor.process_once(current, harness)
                 if did_post_work:
                     return True
@@ -901,18 +904,20 @@ class Worker:
             for job in jobs:
                 if not self._worker_can_pick_job(worker_id):
                     return did_work
+                model_selection = model_selection_for_depth(current, getattr(job, "depth", 0))
                 did_claim = self.execute_job(
                     scan=current,
                     workflow_id=workflow.id,
                     job=job,
-                    harness=harness,
+                    harness=self._harness_for_model_selection(model_selection),
+                    model_selection=model_selection,
                 )
                 if did_claim:
                     return True
             if not did_claim:
                 return did_work
 
-    def execute_job(self, *, scan, workflow_id, job, harness):
+    def execute_job(self, *, scan, workflow_id, job, harness, model_selection: ModelSelection | None = None):
         step = job.step
         state = job.state
         metadata_id = None
@@ -921,9 +926,10 @@ class Worker:
         prepared = None
         try:
             schema = output_schema(step.output_format, step.multi_output)
-            thinking_effort = scan.get("thinking_effort") or "medium"
-            harness_name = normalize_harness_name(scan["harness"])
-            model_provider = scan_model_provider(scan)
+            selection = model_selection or model_selection_for_depth(scan, step.depth)
+            thinking_effort = selection.thinking_effort
+            harness_name = normalize_harness_name(selection.harness)
+            model_provider = scan_model_provider({"model_provider": selection.model_provider})
             with self.workspace_setup_slots:
                 started = now_utc()
                 with self.db.connect() as conn:
@@ -943,7 +949,7 @@ class Worker:
                         prompt_filled="",
                         checked_out_commit=None,
                         run_started_at=started,
-                        model=scan["model"],
+                        model=selection.model,
                         harness=harness_name,
                         thinking_effort=thinking_effort,
                         model_provider=model_provider,
@@ -1091,7 +1097,7 @@ class Worker:
                         prompt=prompt_filled,
                         schema=schema,
                         repo_dir=prepared.repo_dir,
-                        model=scan["model"],
+                        model=selection.model,
                         thinking_effort=thinking_effort,
                         env=prepared.workspace.env,
                     )
@@ -1191,7 +1197,7 @@ class Worker:
                             run_time_ms=attempt_run_time_ms,
                             raw_token_usage=usage,
                             codex_session_id=codex_session_id,
-                            model=scan["model"],
+                            model=selection.model,
                             harness=harness_name,
                             thinking_effort=thinking_effort,
                             model_provider=model_provider,

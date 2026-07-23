@@ -365,6 +365,39 @@ def repeat_runs(scan):
         return 1
 
 
+def scan_model_configuration(scan, depth=None):
+    default = {
+        "model": str(scan.get("model") or ""),
+        "modelProvider": str(
+            scan.get("model_provider") or scan.get("modelProvider") or "openrouter"
+        ),
+        "thinkingEffort": str(
+            scan.get("thinking_effort") or scan.get("thinkingEffort") or "medium"
+        ),
+        "harness": str(scan.get("harness") or ""),
+    }
+    overrides = scan.get("model_overrides")
+    if overrides is None:
+        overrides = scan.get("modelOverrides")
+    override = overrides.get(str(depth)) if depth is not None and isinstance(overrides, dict) else None
+    if not isinstance(override, dict):
+        return default
+    return {
+        "model": str(override.get("model") or default["model"]),
+        "modelProvider": str(
+            override.get("model_provider")
+            or override.get("modelProvider")
+            or default["modelProvider"]
+        ),
+        "thinkingEffort": str(
+            override.get("thinking_effort")
+            or override.get("thinkingEffort")
+            or default["thinkingEffort"]
+        ),
+        "harness": str(override.get("harness") or default["harness"]),
+    }
+
+
 def configured_post_script_ids(scan):
     ids = []
 
@@ -2681,6 +2714,7 @@ def build_scan(
             "modelProvider": scan.get("model_provider") or "openrouter",
             "thinkingEffort": scan.get("thinking_effort") or "medium",
             "harness": scan["harness"],
+            "modelOverrides": scan.get("model_overrides") or {},
             "status": scan["status"],
             "workflowId": scalar_id(scan["workflow_id"]),
             "workflowName": workflow.get("name") if workflow else None,
@@ -2925,7 +2959,7 @@ def build_queue(scan, steps, completed_keys, claimed_keys, results_by_line):
                 expected_by_step[step["id"]].add(key)
                 if key not in completed_keys:
                     if key not in claimed_keys:
-                        pending.append(job_from_state(step, state))
+                        pending.append(job_from_state(step, state, scan))
                     continue
                 if step["is_last_step"]:
                     continue
@@ -2943,7 +2977,7 @@ def build_queue(scan, steps, completed_keys, claimed_keys, results_by_line):
     return {"expected_by_step": expected_by_step, "pending": pending}
 
 
-def job_from_state(step, state):
+def job_from_state(step, state, scan):
     return {
         "stepId": scalar_id(step["id"]),
         "stepName": step.get("name") or f"Step {step['id']}",
@@ -2951,6 +2985,7 @@ def job_from_state(step, state):
         "prevId": state["prev_id"],
         "prevTable": state["prev_table"],
         "repeatRun": state["repeat_run"],
+        **scan_model_configuration(scan, step["depth"]),
     }
 
 
@@ -3640,7 +3675,7 @@ function detail(entry) {
     .slice(0, 60);
   return `<div>
     <div class="detail-top">
-      <div style="min-width:0"><div style="display:flex;align-items:center;gap:11px"><div class="title">${esc(s.repoFull)}</div>${statusBadge(s.status)}</div><div class="mono small" style="margin-top:7px">scan #${esc(s.id)} · ${esc(s.workflowName)} · ${esc(s.harness)} · ${esc(s.model)} · thinking ${esc(s.thinkingEffort)}</div>${(s.agentSkills?.length || s.agentSkillNames?.length) ? `<div class="mono small" style="margin-top:7px;color:var(--muted)">skills: ${agentSkillLinks(s)}</div>` : ''}</div>
+      <div style="min-width:0"><div style="display:flex;align-items:center;gap:11px"><div class="title">${esc(s.repoFull)}</div>${statusBadge(s.status)}</div><div class="mono small" style="margin-top:7px">scan #${esc(s.id)} · ${esc(s.workflowName)} · ${esc(s.harness)} · ${esc(s.model)} · thinking ${esc(s.thinkingEffort)}${Object.keys(s.modelOverrides || {}).length ? ` · ${Object.keys(s.modelOverrides).length} depth overrides` : ''}</div>${(s.agentSkills?.length || s.agentSkillNames?.length) ? `<div class="mono small" style="margin-top:7px;color:var(--muted)">skills: ${agentSkillLinks(s)}</div>` : ''}</div>
       <div style="display:flex;align-items:center;gap:9px;flex:none">${scanActionButton(s)}<button onclick="location.href='http://localhost:5173/scans/${esc(s.id)}'">Open scan</button></div>
     </div>
     <div class="grid">
@@ -3802,7 +3837,7 @@ function attemptRow(attempt) {
 }
 
 function nextJob(job, idx) {
-  return `<div class="next"><div class="row"><span class="name" style="font-size:12.5px">d${job.depth} · ${esc(job.stepName)}</span><span class="mono small" style="color:var(--faint)">#${idx+1}</span></div><div class="mono small" style="margin-top:4px">prev ${job.prevId || 0} · repeat ${job.repeatRun}</div></div>`;
+  return `<div class="next"><div class="row"><span class="name" style="font-size:12.5px">d${job.depth} · ${esc(job.stepName)}</span><span class="mono small" style="color:var(--faint)">#${idx+1}</span></div><div class="mono small" style="margin-top:4px">prev ${job.prevId || 0} · repeat ${job.repeatRun} · ${esc(runConfigSummary(job))}</div></div>`;
 }
 
 function runningJob(job) {

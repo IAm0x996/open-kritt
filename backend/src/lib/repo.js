@@ -726,6 +726,8 @@ export async function assembleScans(scans) {
   const out = [];
   for (const s of scans) {
     const wf = wfMap.get(s.workflowId.toString());
+    const workflowSteps = (wf?.stepIds || []).map((id) => stepsMap.get(id.toString())).filter(Boolean);
+    const workflowDepths = [...new Set(workflowSteps.map((step) => step.depth))].sort((left, right) => left - right);
     const ps = psMap.get(s.postScriptId.toString());
     const scanPostScripts = configuredPostScriptIds(s)
       .map((id) => psMap.get(id))
@@ -744,6 +746,7 @@ export async function assembleScans(scans) {
     out.push(
       serializeScan(s, {
         workflowName: wf?.name ?? null,
+        workflowDepths,
         postScriptName: ps?.name ?? null,
         postScripts: scanPostScripts,
         agentSkills: scanSkills,

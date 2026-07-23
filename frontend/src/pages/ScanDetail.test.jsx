@@ -43,6 +43,7 @@ describe('scan run settings', () => {
     model_provider: 'codex',
     thinking_effort: 'medium',
     harness: 'codex',
+    model_overrides: {},
     job_limit: '250',
   };
 
@@ -64,6 +65,7 @@ describe('scan run settings', () => {
       model_provider: 'openrouter',
       thinking_effort: 'medium',
       harness: 'codex',
+      model_overrides: {},
       job_limit: '',
     });
   });
@@ -75,6 +77,36 @@ describe('scan run settings', () => {
   it('still supports setting and clearing a job limit', () => {
     expect(runSettingsPayload({ job_limit: ' 25 ' }, { ...current, job_limit: '' })).toEqual({ jobLimit: 25 });
     expect(runSettingsPayload({ job_limit: '' }, current)).toEqual({ jobLimit: null });
+  });
+
+  it('replaces or clears normalized workflow-depth model overrides', () => {
+    const override = {
+      1: {
+        model: 'claude-sonnet',
+        modelProvider: 'claude',
+        harness: 'claude-code',
+        thinkingEffort: 'high',
+      },
+    };
+    expect(runSettingsPayload({ model_overrides: override }, current)).toEqual({
+      model_overrides: {
+        1: {
+          model: 'claude-sonnet',
+          model_provider: 'claude',
+          harness: 'claude-code',
+          thinking_effort: 'high',
+        },
+      },
+    });
+    expect(
+      runSettingsPayload(
+        { model_overrides: {} },
+        {
+          ...current,
+          model_overrides: override,
+        }
+      )
+    ).toEqual({ model_overrides: {} });
   });
 });
 

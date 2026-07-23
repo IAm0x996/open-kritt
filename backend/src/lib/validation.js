@@ -48,9 +48,10 @@ class ValidationError extends Error {
 }
 export { ValidationError };
 
-function modelSelectionValidation(body) {
+function modelSelectionValidation(body, fieldPrefix = '') {
   const errors = [];
-  const push = (field, message) => errors.push({ field, message });
+  const fieldName = (field) => (fieldPrefix ? `${fieldPrefix}.${field}` : field);
+  const push = (field, message) => errors.push({ field: fieldName(field), message });
 
   const modelValue = body?.model;
   const model = typeof modelValue === 'string' ? modelValue.trim() : '';
@@ -110,6 +111,53 @@ export function validateModelSelection(body) {
   const { errors, normalized } = modelSelectionValidation(body);
   if (errors.length) throw new ValidationError(errors);
   return normalized;
+}
+
+export function validateModelOverrides(value, { allowedDepths = null, field = 'model_overrides' } = {}) {
+  if (value === undefined || value === null) return {};
+  if (!isObjectMap(value)) {
+    throw new ValidationError([{ field, message: 'Model overrides must be an object keyed by workflow depth.' }]);
+  }
+
+  const errors = [];
+  const normalized = {};
+  const entries = Object.entries(value);
+  if (entries.length > 1_000) {
+    errors.push({ field, message: 'Model overrides may contain at most 1,000 workflow depths.' });
+  }
+  const allowed = allowedDepths === null ? null : new Set([...allowedDepths].map(Number));
+
+  for (const [rawDepth, configuration] of entries.slice(0, 1_000)) {
+    const entryField = `${field}.${rawDepth}`;
+    if (!/^(?:0|[1-9]\d*)$/.test(rawDepth)) {
+      errors.push({ field: entryField, message: 'Workflow depth must be a non-negative integer.' });
+      continue;
+    }
+    const depth = Number(rawDepth);
+    if (!Number.isSafeInteger(depth)) {
+      errors.push({ field: entryField, message: 'Workflow depth is too large.' });
+      continue;
+    }
+    if (allowed && !allowed.has(depth)) {
+      errors.push({ field: entryField, message: `Depth ${depth} does not exist in the selected workflow.` });
+    }
+    if (!isObjectMap(configuration)) {
+      errors.push({ field: entryField, message: 'A complete model configuration is required for this depth.' });
+      continue;
+    }
+
+    const selection = modelSelectionValidation(configuration, entryField);
+    errors.push(...selection.errors);
+    normalized[rawDepth] = {
+      model: selection.normalized.model,
+      model_provider: selection.normalized.modelProvider,
+      harness: selection.normalized.harness,
+      thinking_effort: selection.normalized.thinkingEffort,
+    };
+  }
+
+  if (errors.length) throw new ValidationError(errors);
+  return Object.fromEntries(Object.entries(normalized).sort(([left], [right]) => Number(left) - Number(right)));
 }
 
 // ----------------------------------------------------------------------------
@@ -632,6 +680,13 @@ export function validateScan(body, { localNames = null } = {}) {
 
   const selection = modelSelectionValidation(body);
   errors.push(...selection.errors);
+  let modelOverrides = {};
+  try {
+    modelOverrides = validateModelOverrides(body?.model_overrides ?? body?.modelOverrides);
+  } catch (error) {
+    if (error instanceof ValidationError) errors.push(...error.errors);
+    else throw error;
+  }
 
   // dependencies: an array of structured repo refs (remote URL+commit, or local).
   // Back-compat: a comma/space separated string is treated as remote URLs.
@@ -692,39 +747,48 @@ export function validateScan(body, { localNames = null } = {}) {
     dependencies, // [{ kind, repoFull, commitSha }]
     configuration,
     ...selection.normalized,
+    modelOverrides,
     severityRanker,
     extra,
     jobLimit,
   };
 }
 
-export function validateScanRuntimeSettings(body, current = {}) {
-  return validateProspectiveScanRuntimeSettings(body, current).data;
+export function validateScanRuntimeSettings(body, current = {}, options = {}) {
+  return validateProspectiveScanRuntimeSettings(body, current, options).data;
 }
 
-export function validateProspectiveScanRuntimeSettings(body, current = {}) {
+export function validateProspectiveScanRuntimeSettings(body, current = {}, { allowedDepths = null } = {}) {
   const data = {};
   const hasOwn = (key) => Object.prototype.hasOwnProperty.call(body || {}, key);
   const hasModel = hasOwn('model');
   const hasProvider = hasOwn('model_provider') || hasOwn('modelProvider');
   const hasHarness = hasOwn('harness');
   const hasThinkingEffort = hasOwn('thinking_effort') || hasOwn('thinkingEffort');
+  const hasModelOverrides = hasOwn('model_overrides') || hasOwn('modelOverrides');
 
-  if (!hasModel && !hasProvider && !hasHarness && !hasThinkingEffort) {
-    return { data, selection: null };
+  if (!hasModel && !hasProvider && !hasHarness && !hasThinkingEffort && !hasModelOverrides) {
+    return { data, selection: null, modelOverrides: null };
   }
 
-  const selection = validateModelSelection({
-    model: hasModel ? body?.model : current.model,
-    model_provider: hasProvider ? (body?.model_provider ?? body?.modelProvider) : current.modelProvider,
-    harness: hasHarness ? body?.harness : current.harness,
-    thinking_effort: hasThinkingEffort ? (body?.thinking_effort ?? body?.thinkingEffort) : current.thinkingEffort,
-  });
+  const selection =
+    hasModel || hasProvider || hasHarness || hasThinkingEffort
+      ? validateModelSelection({
+          model: hasModel ? body?.model : current.model,
+          model_provider: hasProvider ? (body?.model_provider ?? body?.modelProvider) : current.modelProvider,
+          harness: hasHarness ? body?.harness : current.harness,
+          thinking_effort: hasThinkingEffort ? (body?.thinking_effort ?? body?.thinkingEffort) : current.thinkingEffort,
+        })
+      : null;
+  const modelOverrides = hasModelOverrides
+    ? validateModelOverrides(body?.model_overrides ?? body?.modelOverrides, { allowedDepths })
+    : null;
 
   if (hasModel) data.model = selection.model;
   if (hasProvider) data.modelProvider = selection.modelProvider;
   if (hasHarness) data.harness = selection.harness;
   if (hasThinkingEffort) data.thinkingEffort = selection.thinkingEffort;
+  if (hasModelOverrides) data.modelOverrides = modelOverrides;
 
-  return { data, selection };
+  return { data, selection, modelOverrides };
 }

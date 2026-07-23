@@ -108,6 +108,14 @@ test('scan serialization distinguishes raw candidates from listed findings', () 
       modelProvider: 'codex',
       harness: 'codex',
       thinkingEffort: 'xhigh',
+      modelOverrides: {
+        1: {
+          model: 'claude-sonnet',
+          model_provider: 'claude',
+          harness: 'claude-code',
+          thinking_effort: 'high',
+        },
+      },
       status: 'completed',
       agentSkillIds: [],
       insertedAt: new Date(),
@@ -119,6 +127,7 @@ test('scan serialization distinguishes raw candidates from listed findings', () 
       canonicalFindings: 14,
       duplicateFindings: 4,
       exploitable: 8,
+      workflowDepths: [0, 1],
       postScriptName: 'Ease of exploitability',
       postScripts: [
         { id: 4n, name: 'Ease of exploitability' },
@@ -134,6 +143,15 @@ test('scan serialization distinguishes raw candidates from listed findings', () 
   assert.equal(serialized.exploitable, 8);
   assert.deepEqual(serialized.postScriptNames, ['Ease of exploitability', 'Patched since', 'Resource exhaustion']);
   assert.equal(serialized.postScripts[0].primary, true);
+  assert.deepEqual(serialized.workflowDepths, [0, 1]);
+  assert.deepEqual(serialized.modelOverrides, {
+    1: {
+      model: 'claude-sonnet',
+      modelProvider: 'claude',
+      harness: 'claude-code',
+      thinkingEffort: 'high',
+    },
+  });
 });
 
 test('scan serialization exposes durable logical-job limits and resume boundaries', () => {
@@ -229,9 +247,7 @@ test('Claude reconnect failures link directly to Accounts', () => {
     'Reconnect Claude in Accounts.';
 
   assert.equal(knownError(message)?.title, 'Claude sign-in required');
-  assert.deepEqual(knownError(message)?.fixLinks, [
-    { label: 'Open Accounts', url: '/accounts', internal: true },
-  ]);
+  assert.deepEqual(knownError(message)?.fixLinks, [{ label: 'Open Accounts', url: '/accounts', internal: true }]);
 });
 
 test('workspace disk exhaustion renders an actionable engine error', () => {

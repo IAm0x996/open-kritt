@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import {
   validateScan,
   validateScanJobLimit,
+  validateModelOverrides,
   validateProspectiveScanRuntimeSettings,
   ValidationError,
 } from '../lib/validation.js';
@@ -117,19 +118,61 @@ export function requiredScanExtraKeys(workflow, workflowSteps = [], postScripts 
   return [...new Set([...declared, ...workflowPromptKeys, ...postScriptPromptKeys])];
 }
 
-export async function validateScanRuntimeUpdate(body, current, { assertAvailable } = {}) {
-  const runtime = validateProspectiveScanRuntimeSettings(body, current);
-  if (!runtime.selection) return {};
+function modelOverrideSelection(configuration) {
+  return {
+    model: configuration.model,
+    modelProvider: configuration.model_provider ?? configuration.modelProvider,
+    harness: configuration.harness,
+    thinkingEffort: configuration.thinking_effort ?? configuration.thinkingEffort,
+  };
+}
+
+async function assertSelectionAvailable(assertAvailable, selection, fieldPrefix = '') {
+  try {
+    await assertAvailable(selection);
+  } catch (error) {
+    if (!(error instanceof ValidationError) || !fieldPrefix) throw error;
+    throw new ValidationError(
+      error.errors.map((item) => ({
+        ...item,
+        field: `${fieldPrefix}.${item.field}`,
+      }))
+    );
+  }
+}
+
+export async function assertModelOverridesAvailable(modelOverrides, assertAvailable) {
+  const checked = new Set();
+  for (const [depth, configuration] of Object.entries(modelOverrides || {})) {
+    const selection = modelOverrideSelection(configuration);
+    const signature = JSON.stringify(selection);
+    if (checked.has(signature)) continue;
+    checked.add(signature);
+    await assertSelectionAvailable(assertAvailable, selection, `model_overrides.${depth}`);
+  }
+}
+
+export async function validateScanRuntimeUpdate(body, current, { assertAvailable, allowedDepths = null } = {}) {
+  const runtime = validateProspectiveScanRuntimeSettings(body, current, { allowedDepths });
+  if (!runtime.selection && runtime.modelOverrides === null) return {};
   if (typeof assertAvailable !== 'function') {
     throw new TypeError('Runtime model availability validation requires a transaction-aware checker.');
   }
-  await assertAvailable(runtime.selection);
-  return {
-    model: runtime.selection.model,
-    modelProvider: runtime.selection.modelProvider,
-    harness: runtime.selection.harness,
-    thinkingEffort: runtime.selection.thinkingEffort,
-  };
+  const data = {};
+  if (runtime.selection) {
+    await assertSelectionAvailable(assertAvailable, runtime.selection);
+    Object.assign(data, {
+      model: runtime.selection.model,
+      modelProvider: runtime.selection.modelProvider,
+      harness: runtime.selection.harness,
+      thinkingEffort: runtime.selection.thinkingEffort,
+    });
+  }
+  if (runtime.modelOverrides !== null) {
+    await assertModelOverridesAvailable(runtime.modelOverrides, assertAvailable);
+    data.modelOverrides = runtime.modelOverrides;
+  }
+  return data;
 }
 
 function transactionModelAvailabilityChecker(tx, options = {}) {
@@ -138,6 +181,19 @@ function transactionModelAvailabilityChecker(tx, options = {}) {
       ...options,
       getCatalog: (provider) => tx.modelCatalog.findUnique({ where: { provider } }),
     });
+}
+
+async function scanWorkflowDepths(tx, workflowId) {
+  const workflow = await tx.workflow.findUnique({ where: { id: workflowId }, select: { stepIds: true } });
+  if (!workflow) {
+    throw new ValidationError([{ field: 'workflowId', message: 'Workflow does not exist.' }]);
+  }
+  if (!workflow.stepIds?.length) return [];
+  const steps = await tx.step.findMany({
+    where: { id: { in: workflow.stepIds } },
+    select: { depth: true },
+  });
+  return [...new Set(steps.map((step) => step.depth))];
 }
 
 export async function patchScanIfPresent(tx, scanId, body, { assertAvailable, availabilityOptions } = {}) {
@@ -171,7 +227,17 @@ export async function patchScanIfPresent(tx, scanId, body, { assertAvailable, av
   }
 
   const availabilityChecker = assertAvailable || transactionModelAvailabilityChecker(tx, availabilityOptions);
-  Object.assign(data, await validateScanRuntimeUpdate(body, existing, { assertAvailable: availabilityChecker }));
+  const hasModelOverrides =
+    Object.prototype.hasOwnProperty.call(body, 'model_overrides') ||
+    Object.prototype.hasOwnProperty.call(body, 'modelOverrides');
+  const allowedDepths = hasModelOverrides ? await scanWorkflowDepths(tx, existing.workflowId) : null;
+  Object.assign(
+    data,
+    await validateScanRuntimeUpdate(body, existing, {
+      assertAvailable: availabilityChecker,
+      allowedDepths,
+    })
+  );
   if (Object.keys(data).length === 0) {
     throw new ValidationError([{ field: 'scan', message: 'Provide a status or runtime setting to update.' }]);
   }
@@ -399,8 +465,10 @@ router.post('/', async (req, res, next) => {
       // unioned with the stored array, so this also supports workflows saved before
       // the extra field existed. Every selected-config key must be supplied.
       const wfSteps = workflow.stepIds?.length
-        ? await tx.step.findMany({ where: { id: { in: workflow.stepIds } }, select: { content: true } })
+        ? await tx.step.findMany({ where: { id: { in: workflow.stepIds } }, select: { content: true, depth: true } })
         : [];
+      validateModelOverrides(valid.modelOverrides, { allowedDepths: wfSteps.map((step) => step.depth) });
+      await assertModelOverridesAvailable(valid.modelOverrides, transactionModelAvailabilityChecker(tx));
       const selectedPostScripts = queryPostScriptIds.map((id) => postScriptMap.get(id));
       const expectedExtra = requiredScanExtraKeys(workflow, wfSteps, selectedPostScripts);
       const providedExtra = valid.extra && typeof valid.extra === 'object' ? valid.extra : {};
@@ -447,6 +515,7 @@ router.post('/', async (req, res, next) => {
           modelProvider: valid.modelProvider,
           harness: valid.harness,
           thinkingEffort: valid.thinkingEffort,
+          modelOverrides: valid.modelOverrides,
           severityRanker: valid.severityRanker,
           status: launchDecision.status,
           jobLimit: valid.jobLimit,

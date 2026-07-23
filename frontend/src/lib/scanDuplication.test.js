@@ -30,6 +30,14 @@ describe('scanConfigurationDraft', () => {
       modelProvider: 'codex',
       harness: 'codex',
       thinkingEffort: 'high',
+      modelOverrides: {
+        1: {
+          model: 'claude-sonnet',
+          modelProvider: 'claude',
+          harness: 'claude-code',
+          thinkingEffort: 'medium',
+        },
+      },
       extra: { threat_model: { actor: 'anonymous user' } },
       severityRanker: '# Ranking rules',
       status: 'failed',
@@ -60,6 +68,14 @@ describe('scanConfigurationDraft', () => {
       model_provider: 'codex',
       harness: 'codex',
       thinking_effort: 'high',
+      model_overrides: {
+        1: {
+          model: 'claude-sonnet',
+          model_provider: 'claude',
+          harness: 'claude-code',
+          thinking_effort: 'medium',
+        },
+      },
       extra: { threat_model: { actor: 'anonymous user' } },
       rankerIds: [],
       rankerExtra: '# Ranking rules',
