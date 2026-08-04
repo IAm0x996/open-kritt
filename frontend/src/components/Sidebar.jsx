@@ -59,12 +59,7 @@ export function CommunityLinks() {
           key={href}
           {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
         >
-          <span>{label}</span>
-          {external && (
-            <span className="sidebar-community-external" aria-hidden="true">
-              ↗
-            </span>
-          )}
+          {label}
         </a>
       ))}
     </nav>
@@ -74,9 +69,7 @@ export function CommunityLinks() {
 export function CommunityShareButton({ onClick }) {
   return (
     <button type="button" className="sidebar-community-share" onClick={onClick}>
-      <span className="sidebar-community-share-long">Give back to the community by sharing</span>
-      <span className="sidebar-community-share-short">Share open·kritt</span>
-      <span aria-hidden="true">↗</span>
+      Share open·kritt
     </button>
   );
 }
@@ -167,8 +160,10 @@ export default function Sidebar({ onShareCommunity }) {
         <div className="mono sidebar-community-label" style={GROUP_LABEL}>
           COMMUNITY
         </div>
-        <CommunityShareButton onClick={onShareCommunity} />
-        <CommunityLinks />
+        <div className="sidebar-community-actions">
+          <CommunityLinks />
+          <CommunityShareButton onClick={onShareCommunity} />
+        </div>
       </div>
 
       <div className="sidebar-footer" style={{ paddingTop: 12, borderTop: '1px solid var(--border)' }}>

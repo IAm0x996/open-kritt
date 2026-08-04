@@ -19,17 +19,16 @@ function shareFile(blob) {
   return new File([blob], SHARE_IMAGE_FILENAME, { type: 'image/png' });
 }
 
-export default function ShareResultDialog({ severity = null, automatic = false, mode = 'result', onClose }) {
+export default function ShareResultDialog({ severity = null, mode = 'result', onClose }) {
   const communityMode = mode === 'community';
   const [includeSeverity, setIncludeSeverity] = useState(false);
-  const [dontShowAgain, setDontShowAgain] = useState(false);
   const [imageBlob, setImageBlob] = useState(null);
   const [imageError, setImageError] = useState(null);
   const [busyAction, setBusyAction] = useState(null);
   const [feedback, setFeedback] = useState(null);
   const canvasRef = useRef(null);
 
-  const closeDialog = () => onClose({ disableAutomaticPrompts: automatic && dontShowAgain });
+  const closeDialog = () => onClose();
   const dialogRef = useModalDialog(closeDialog);
   const cardArtifact = useMemo(
     () => (communityMode ? buildCommunityShareArtifact() : buildShareArtifact({ includeSeverity, severity })),
@@ -157,7 +156,7 @@ export default function ShareResultDialog({ severity = null, automatic = false, 
             <div className="share-result-subtitle">
               {communityMode
                 ? 'Help more security researchers discover, use, and improve open·kritt.'
-                : 'Share what open·kritt helped you accomplish—never the classified vulnerability details.'}
+                : 'Share what open·kritt helped you accomplish - never the classified vulnerability details.'}
             </div>
           </div>
           <button type="button" className="share-result-close" aria-label="Close share dialog" onClick={closeDialog}>
@@ -183,7 +182,7 @@ export default function ShareResultDialog({ severity = null, automatic = false, 
                 onChange={(event) => setIncludeSeverity(event.target.checked)}
               />
               <span>
-                <strong>Include highest severity</strong>
+                <strong>Include severity</strong>
                 <small>This reveals only the normalized severity shown in the preview.</small>
               </span>
             </label>
@@ -195,7 +194,7 @@ export default function ShareResultDialog({ severity = null, automatic = false, 
             ) : (
               <>
                 No repository, finding title, path, code, report, PoC, model, scan ID, count, or timestamp is included.
-                Sharing open·kritt—not the vulnerability details—is the safe way to contribute back.
+                Sharing open·kritt—not the vulnerability details - is the safe way to contribute back.
               </>
             )}
           </div>
@@ -235,17 +234,6 @@ export default function ShareResultDialog({ severity = null, automatic = false, 
               </Button>
             </div>
           </div>
-
-          {!communityMode && automatic && (
-            <label className="share-result-dont-show">
-              <input
-                type="checkbox"
-                checked={dontShowAgain}
-                onChange={(event) => setDontShowAgain(event.target.checked)}
-              />
-              Don’t show this automatically again
-            </label>
-          )}
         </div>
       </div>
     </div>

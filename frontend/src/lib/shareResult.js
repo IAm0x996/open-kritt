@@ -5,9 +5,6 @@ export const X_HANDLE = '@Kritt_AI';
 export const X_DESTINATION = 'https://kritt.ai/';
 export const GITHUB_DESTINATION = 'https://github.com/Kritt-ai/open-kritt';
 
-const SHARE_PROMPT_SETTINGS_KEY = 'ok-share-prompt-v1';
-const SHARE_PROMPT_SCAN_PREFIX = `${SHARE_PROMPT_SETTINGS_KEY}:scan:`;
-const SHARE_PROMPT_RATE = 0.2;
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 const SEVERITY_LABELS = Object.fromEntries(SEVERITY_ORDER.map((severity) => [severity, capitalize(severity)]));
 
@@ -19,11 +16,6 @@ export function normalizeShareSeverity(value) {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   return Object.hasOwn(SEVERITY_LABELS, normalized) ? normalized : null;
-}
-
-export function highestShareSeverity(values) {
-  const normalized = new Set((Array.isArray(values) ? values : []).map(normalizeShareSeverity).filter(Boolean));
-  return SEVERITY_ORDER.find((severity) => normalized.has(severity)) || null;
 }
 
 export function buildShareArtifact({ channel = 'elsewhere', includeSeverity = false, severity = null } = {}) {
@@ -59,107 +51,6 @@ export function buildCommunityShareArtifact({ channel = 'elsewhere' } = {}) {
     caption,
   });
 }
-
-export function canShareScanResult({ status, findingsLoaded, findingCount }) {
-  return status === 'completed' && findingsLoaded === true && Number(findingCount) > 0;
-}
-
-function parseSettings(value) {
-  if (!value) return { firstEligibleSeen: false, disabled: false };
-  try {
-    const parsed = JSON.parse(value);
-    return {
-      firstEligibleSeen: parsed?.firstEligibleSeen === true,
-      disabled: parsed?.disabled === true,
-    };
-  } catch {
-    return { firstEligibleSeen: false, disabled: false };
-  }
-}
-
-function browserStorage() {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-export function createSharePromptStore(storage = browserStorage()) {
-  let activeStorage = storage;
-  let memorySettings = { firstEligibleSeen: false, disabled: false };
-  const memoryDecisions = new Map();
-
-  const readSettings = () => {
-    if (!activeStorage) return memorySettings;
-    try {
-      memorySettings = parseSettings(activeStorage.getItem(SHARE_PROMPT_SETTINGS_KEY));
-    } catch {
-      activeStorage = null;
-    }
-    return memorySettings;
-  };
-
-  const writeSettings = (settings) => {
-    memorySettings = settings;
-    if (!activeStorage) return;
-    try {
-      activeStorage.setItem(SHARE_PROMPT_SETTINGS_KEY, JSON.stringify(settings));
-    } catch {
-      activeStorage = null;
-    }
-  };
-
-  const readDecision = (scanId) => {
-    const key = String(scanId);
-    if (memoryDecisions.has(key)) return memoryDecisions.get(key);
-    if (!activeStorage) return null;
-    try {
-      const value = activeStorage.getItem(`${SHARE_PROMPT_SCAN_PREFIX}${key}`);
-      if (value === 'shown' || value === 'skipped') {
-        memoryDecisions.set(key, value);
-        return value;
-      }
-    } catch {
-      activeStorage = null;
-    }
-    return null;
-  };
-
-  const writeDecision = (scanId, decision) => {
-    const key = String(scanId);
-    memoryDecisions.set(key, decision);
-    if (!activeStorage) return;
-    try {
-      activeStorage.setItem(`${SHARE_PROMPT_SCAN_PREFIX}${key}`, decision);
-    } catch {
-      activeStorage = null;
-    }
-  };
-
-  return {
-    evaluate({ scanId, status, findingsLoaded, findingCount, random = Math.random }) {
-      if (!canShareScanResult({ status, findingsLoaded, findingCount })) return false;
-      const settings = readSettings();
-      if (settings.disabled || readDecision(scanId)) return false;
-
-      const shouldShow = !settings.firstEligibleSeen || random() < SHARE_PROMPT_RATE;
-      writeDecision(scanId, shouldShow ? 'shown' : 'skipped');
-      writeSettings({ ...settings, firstEligibleSeen: true });
-      return shouldShow;
-    },
-
-    disableAutomaticPrompts() {
-      writeSettings({ ...readSettings(), disabled: true });
-    },
-
-    automaticPromptsDisabled() {
-      return readSettings().disabled;
-    },
-  };
-}
-
-export const sharePromptStore = createSharePromptStore();
 
 let logoPromise = null;
 

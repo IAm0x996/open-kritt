@@ -5,30 +5,11 @@ import {
   X_HANDLE,
   buildCommunityShareArtifact,
   buildShareArtifact,
-  canShareScanResult,
   copyShareText,
-  createSharePromptStore,
-  highestShareSeverity,
   normalizeShareSeverity,
   shareWithChannel,
   xIntentUrl,
 } from './shareResult.js';
-
-function memoryStorage() {
-  const values = new Map();
-  return {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => values.set(key, String(value)),
-  };
-}
-
-const eligible = (scanId, random = () => 0.99) => ({
-  scanId,
-  status: 'completed',
-  findingsLoaded: true,
-  findingCount: 1,
-  random,
-});
 
 describe('share artifact privacy', () => {
   it('defaults to generic copy and keeps channel attribution separate', () => {
@@ -48,7 +29,6 @@ describe('share artifact privacy', () => {
   it('allows only recognized normalized severities into the card', () => {
     expect(normalizeShareSeverity(' Critical ')).toBe('critical');
     expect(normalizeShareSeverity('informational')).toBeNull();
-    expect(highestShareSeverity(['low', 'Critical', 'high'])).toBe('critical');
 
     expect(buildShareArtifact({ includeSeverity: true, severity: 'high' }).cardText).toContain('a High vulnerability');
     const unsafe = buildShareArtifact({
@@ -72,56 +52,6 @@ describe('share artifact privacy', () => {
     expect(x.caption).not.toContain(GITHUB_DESTINATION);
     expect(elsewhere.caption).toContain(GITHUB_DESTINATION);
     expect(elsewhere.caption).not.toContain(X_HANDLE);
-  });
-});
-
-describe('share prompt eligibility and frequency', () => {
-  it('requires a completed scan with loaded canonical findings', () => {
-    expect(canShareScanResult({ status: 'completed', findingsLoaded: true, findingCount: 1 })).toBe(true);
-    expect(canShareScanResult({ status: 'running', findingsLoaded: true, findingCount: 1 })).toBe(false);
-    expect(canShareScanResult({ status: 'completed', findingsLoaded: false, findingCount: 1 })).toBe(false);
-    expect(canShareScanResult({ status: 'completed', findingsLoaded: true, findingCount: 0 })).toBe(false);
-  });
-
-  it('always shows the first eligible scan, then draws once per later scan', () => {
-    const store = createSharePromptStore(memoryStorage());
-    const firstRandom = vi.fn(() => 0.99);
-
-    expect(store.evaluate(eligible('1', firstRandom))).toBe(true);
-    expect(firstRandom).not.toHaveBeenCalled();
-    expect(store.evaluate(eligible('1', () => 0))).toBe(false);
-    expect(store.evaluate(eligible('2', () => 0.19))).toBe(true);
-    expect(store.evaluate(eligible('2', () => 0.99))).toBe(false);
-    expect(store.evaluate(eligible('3', () => 0.2))).toBe(false);
-    expect(store.evaluate(eligible('3', () => 0))).toBe(false);
-  });
-
-  it('does not consume the first decision for ineligible scans and supports global dismissal', () => {
-    const store = createSharePromptStore(memoryStorage());
-    expect(
-      store.evaluate({ scanId: '0', status: 'completed', findingsLoaded: true, findingCount: 0, random: () => 0 })
-    ).toBe(false);
-    expect(store.evaluate(eligible('1'))).toBe(true);
-
-    store.disableAutomaticPrompts();
-    expect(store.automaticPromptsDisabled()).toBe(true);
-    expect(store.evaluate(eligible('2', () => 0))).toBe(false);
-    expect(canShareScanResult({ status: 'completed', findingsLoaded: true, findingCount: 1 })).toBe(true);
-  });
-
-  it('falls back to stable in-memory decisions when localStorage throws', () => {
-    const unavailable = {
-      getItem: () => {
-        throw new Error('blocked');
-      },
-      setItem: () => {
-        throw new Error('blocked');
-      },
-    };
-    const store = createSharePromptStore(unavailable);
-    expect(store.evaluate(eligible('1'))).toBe(true);
-    expect(store.evaluate(eligible('2', () => 0.1))).toBe(true);
-    expect(store.evaluate(eligible('2', () => 0.1))).toBe(false);
   });
 });
 
