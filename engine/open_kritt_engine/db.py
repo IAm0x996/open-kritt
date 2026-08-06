@@ -723,6 +723,21 @@ class Database:
     def load_claimed_metadata(self, conn, scan_id: int) -> set[tuple[int, int, str | None, int]]:
         return self.load_metadata_keys(conn, scan_id, ("completed", "running"))
 
+    def load_attempted_metadata(self, conn, scan_id: int) -> set[tuple[int, int, str | None, int]]:
+        rows = conn.execute(
+            """
+            SELECT step_id, coalesce(prev_id, 0) AS prev_id, prev_table, coalesce(repeat_run, 1) AS repeat_run
+            FROM workflows.step_metadata
+            WHERE scan_id = %s
+              AND coalesce(kind, 'step') = 'step'
+            """,
+            (scan_id,),
+        ).fetchall()
+        return {
+            (_to_int(row["step_id"]), _to_int(row["prev_id"]), row["prev_table"], int(row["repeat_run"]))
+            for row in rows
+        }
+
     def load_metadata_keys(
         self, conn, scan_id: int, statuses: tuple[str, ...]
     ) -> set[tuple[int, int, str | None, int]]:

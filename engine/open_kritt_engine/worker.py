@@ -47,7 +47,7 @@ from .models import ModelSelection, model_selection_for_depth, post_processing_m
 from .post_processing import PostProcessor, PostProcessRateLimited
 from .prompting import harness_prompt, native_agent_skills_prompt, render_prompt, repeat_append_prompt
 from .provider_credentials import provider_environment
-from .queue import build_pending_jobs
+from .queue import build_pending_jobs, configured_step_ids
 from .runtime_config import runtime_bool, runtime_config_path, runtime_float, runtime_int, runtime_value
 from .schema import OutputValidationError, output_schema, validate_payload
 from .storage_cleanup import prune_docker_build_cache, prune_stopped_scan_containers, prune_unused_docker_images
@@ -1170,6 +1170,10 @@ class Worker:
                 else:
                     completed = self.db.load_completed_metadata(conn, scan_id)
                     claimed = self.db.load_claimed_metadata(conn, scan_id)
+                    skip_attempted_step_ids = configured_step_ids(current, "skip_attempted_step_ids")
+                    if skip_attempted_step_ids:
+                        attempted = self.db.load_attempted_metadata(conn, scan_id)
+                        claimed |= {key for key in attempted if key[0] in skip_attempted_step_ids}
                     step_results = self.db.load_step_results(conn, scan_id)
                     jobs = build_pending_jobs(
                         scan=current,
