@@ -21,7 +21,7 @@ from .artifact_cleanup import (
 from .claude_auth import ClaudeCredentialRateLimited
 from .codex_updater import CodexCliGate, CodexUpdater
 from .config import EngineConfig
-from .db import Database, now_utc
+from .db import QUOTA_RETRY_MAX_SECONDS, Database, now_utc
 from .generation import GenerationRunner, GenerationValidationError
 from .harnesses import (
     CAPACITY_RATE_LIMIT_FAILURES,
@@ -86,7 +86,6 @@ GENERATION_PERSISTENCE_ERROR = "Generated draft could not be saved. Please try a
 RATE_LIMIT_BACKOFF_BASE_SECONDS = 5.0
 RATE_LIMIT_BACKOFF_MAX_SECONDS = 60.0
 RATE_LIMIT_RETRY_AFTER_MAX_SECONDS = 300.0
-QUOTA_RETRY_AFTER_MAX_SECONDS = 8 * 24 * 60 * 60.0
 RATE_LIMIT_RESUME_DELAY_SECONDS = 60.0
 ARTIFACT_CLEANUP_INTERVAL_SECONDS = 5 * 60.0
 ARTIFACT_CLEANUP_GRACE_SECONDS = 5 * 60.0
@@ -114,12 +113,12 @@ class RateLimitExhausted(StepExecutionError):
 
 
 def _rate_limit_retry_delay(error: HarnessError, attempt: int) -> float:
+    if error.code == "account_quota_limited":
+        # Quota windows can be reset or replenished before the provider's
+        # advertised deadline, so let the persistent scan backoff probe again.
+        return RATE_LIMIT_RESUME_DELAY_SECONDS
     if error.retry_after_seconds is not None:
-        maximum = (
-            QUOTA_RETRY_AFTER_MAX_SECONDS
-            if error.code in {"account_quota_limited", "subagent_limited"}
-            else RATE_LIMIT_RETRY_AFTER_MAX_SECONDS
-        )
+        maximum = QUOTA_RETRY_MAX_SECONDS if error.code == "subagent_limited" else RATE_LIMIT_RETRY_AFTER_MAX_SECONDS
         return min(max(0.0, error.retry_after_seconds), maximum)
     base = min(RATE_LIMIT_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt - 1)), RATE_LIMIT_BACKOFF_MAX_SECONDS)
     return base * random.uniform(0.8, 1.2)

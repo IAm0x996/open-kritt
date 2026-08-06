@@ -301,7 +301,7 @@ def test_rate_limit_backoff_is_exponential_and_jitter_is_testable(monkeypatch):
         code="account_quota_limited",
         retry_after_seconds=2 * 24 * 60 * 60,
     )
-    assert worker_module._rate_limit_retry_delay(quota, 1) == 2 * 24 * 60 * 60
+    assert worker_module._rate_limit_retry_delay(quota, 1) == RATE_LIMIT_RESUME_DELAY_SECONDS
 
 
 class _QueryResult:
@@ -792,6 +792,8 @@ def test_claim_scan_skips_deferred_rate_limits_and_clears_due_timestamp_on_claim
     assert "status = 'rate_limited'" in pending_query
     assert "reasoning->>'retry_after'" in pending_query
     assert "::timestamptz <= now()" in pending_query
+    assert "updated_at + make_interval" in pending_query
+    assert conn.calls[2][1] == (QUOTA_RETRY_MAX_SECONDS,)
     assert "reasoning - 'error' - 'retry_after'" in pending_query
     assert "last_resumed_at" in pending_query
 
@@ -948,8 +950,21 @@ def test_persistent_rate_limit_backoff_grows_and_caps_without_a_retry_limit():
             provider_retry_after_seconds=6 * 24 * 60 * 60,
             maximum_seconds=QUOTA_RETRY_MAX_SECONDS,
         )
-        == 6 * 24 * 60 * 60
+        == QUOTA_RETRY_MAX_SECONDS
     )
+
+
+def test_persistent_quota_backoff_retries_quickly_and_caps_at_thirty_minutes():
+    delays = [
+        rate_limit_retry_delay(
+            retry_count,
+            provider_retry_after_seconds=RATE_LIMIT_RESUME_DELAY_SECONDS,
+            maximum_seconds=QUOTA_RETRY_MAX_SECONDS,
+        )
+        for retry_count in range(1, 8)
+    ]
+
+    assert delays == [60, 2 * 60, 4 * 60, 8 * 60, 16 * 60, 30 * 60, 30 * 60]
 
 
 def test_completed_scan_clears_transient_rate_limit_reasoning_but_preserves_autoscale_history():
