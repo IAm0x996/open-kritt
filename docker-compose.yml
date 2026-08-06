@@ -141,6 +141,7 @@ services:
         condition: service_healthy
       executor-view:
         condition: service_healthy
+    restart: unless-stopped
     volumes:
       - ./engine:/app
       - ${ENGINE_DATA_DIR_HOST:-./.data/engine}:/data
@@ -159,8 +160,7 @@ services:
       # Local repositories are copied into scan-specific snapshots; the host source
       # never needs to be modified by the engine.
       - ${LOCAL_REPOS_PATH:-./local_repos}:/run/open-kritt-secrets/local-repos:ro
-    tmpfs:
-      - /checkout-cache
+      - engine-checkout-cache:/checkout-cache
 
   executor-view:
     build:
@@ -233,3 +233,6 @@ services:
     volumes:
       - ${POSTGRES_DATA_DIR:-./.data/postgres}:/var/lib/postgresql/data
       - ./database/init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  engine-checkout-cache:
