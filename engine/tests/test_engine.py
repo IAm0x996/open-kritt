@@ -56,7 +56,7 @@ from open_kritt_engine.prompting import (
     repeat_append_prompt,
     scan_context,
 )
-from open_kritt_engine.queue import build_pending_jobs, repeat_runs
+from open_kritt_engine.queue import build_pending_jobs, configured_step_ids, repeat_runs
 from open_kritt_engine.repository import github_clone_url, normalize_repo_full, safe_repo_dir
 from open_kritt_engine.runtime_config import ensure_runtime_config_file
 from open_kritt_engine.schema import EXTRACTOR_HELPER_FIELD, OutputValidationError, output_schema, validate_payload
@@ -89,7 +89,7 @@ def marked(payload):
 
 @pytest.fixture(autouse=True)
 def isolate_unit_tests_from_external_runners(monkeypatch):
-    monkeypatch.setattr(harnesses, "_scan_docker_command", lambda cmd, _repo_dir, _env: cmd)
+    monkeypatch.setattr(harnesses, "_scan_docker_command", lambda cmd, _repo_dir, _env, **_kwargs: cmd)
     monkeypatch.setattr(workspace_module, "resolve_scan_checkout_revisions", lambda scan, **_kwargs: scan)
     monkeypatch.setattr(worker_module, "resolve_scan_checkout_revisions", lambda scan, **_kwargs: scan)
 
@@ -1494,7 +1494,11 @@ def test_tool_harness_docker_runner_is_root_writable_and_internet_enabled(monkey
 
     monkeypatch.setattr(harnesses, "_run_process", fake_run_process)
 
-    result = ClaudeHarness(timeout_seconds=5).run(
+    result = ClaudeHarness(
+        timeout_seconds=5,
+        runner_memory_mb=1536,
+        runner_memory_reservation_mb=768,
+    ).run(
         prompt="prompt",
         schema=output_schema('{"thing":"string"}', multi_output=False),
         repo_dir=str(repo_dir),
@@ -1524,6 +1528,9 @@ def test_tool_harness_docker_runner_is_root_writable_and_internet_enabled(monkey
     assert network.startswith(harnesses.SCAN_SANDBOX_NETWORK_PREFIX)
     assert "runner-image" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--workdir") + 1] == "/workspace"
+    assert captured["cmd"][captured["cmd"].index("--memory") + 1] == "1536m"
+    assert captured["cmd"][captured["cmd"].index("--memory-swap") + 1] == "1536m"
+    assert captured["cmd"][captured["cmd"].index("--memory-reservation") + 1] == "768m"
     assert "--env" in captured["cmd"]
     assert "HOME=/home/runner" in captured["cmd"]
     assert "CODEX_HOME=/home/runner/.codex" in captured["cmd"]
@@ -2091,6 +2098,105 @@ def test_queue_repeats_each_task_before_feeding_accumulated_results_downstream()
     completed.add((2, 10, "workflows.step_results", 1))
     pending = build_pending_jobs(scan=sc, workflow=workflow, completed=completed, step_results=results)
     assert [(j.step.id, j.state.prev_id, j.state.repeat_run) for j in pending] == [(2, 11, 1), (2, 10, 2)]
+
+
+def test_queue_can_shuffle_one_steps_pending_lineages_without_changing_membership():
+    workflow = Workflow(
+        id=3,
+        name="wf",
+        steps=(
+            step(1, 0, multi=True),
+            step(2, 1, is_last=True),
+        ),
+    )
+    completed = {(1, 0, None, 1)}
+    results = {
+        (1, 0, None, 1): [
+            StepResultRow(
+                id=result_id,
+                step_id=1,
+                prev_id=0,
+                prev_table=None,
+                repeat_run=1,
+                json_answer={"item": result_id},
+            )
+            for result_id in range(10, 30)
+        ]
+    }
+    ordered = build_pending_jobs(
+        scan=scan(),
+        workflow=workflow,
+        completed=completed,
+        step_results=results,
+    )
+    shuffled_scan = scan(
+        {
+            "shuffle_pending_step_ids": [2],
+            "skip_attempted_step_ids": [2, "bad"],
+            "pending_shuffle_seed": "deterministic-test-seed",
+        }
+    )
+    shuffled = build_pending_jobs(
+        scan=shuffled_scan,
+        workflow=workflow,
+        completed=completed,
+        step_results=results,
+    )
+
+    assert configured_step_ids(shuffled_scan, "skip_attempted_step_ids") == {2}
+    assert {job.state.prev_id for job in shuffled} == {job.state.prev_id for job in ordered}
+    assert [job.state.prev_id for job in shuffled] != [job.state.prev_id for job in ordered]
+    assert [job.state.prev_id for job in shuffled] == [
+        job.state.prev_id
+        for job in build_pending_jobs(
+            scan=shuffled_scan,
+            workflow=workflow,
+            completed=completed,
+            step_results=results,
+        )
+    ]
+
+
+def test_queue_can_apply_an_explicit_pending_lineage_order_before_fallback_work():
+    workflow = Workflow(
+        id=3,
+        name="wf",
+        steps=(
+            step(1, 0, multi=True),
+            step(2, 1, is_last=True),
+        ),
+    )
+    completed = {(1, 0, None, 1)}
+    results = {
+        (1, 0, None, 1): [
+            StepResultRow(
+                id=result_id,
+                step_id=1,
+                prev_id=0,
+                prev_table=None,
+                repeat_run=1,
+                json_answer={"item": result_id},
+            )
+            for result_id in range(10, 15)
+        ]
+    }
+    prioritized_scan = scan(
+        {
+            "pending_lineage_order_by_step": {"2": [13, "11", "bad", 13]},
+            "shuffle_pending_step_ids": [2],
+            "pending_shuffle_seed": "fallback-only",
+        }
+    )
+
+    pending = build_pending_jobs(
+        scan=prioritized_scan,
+        workflow=workflow,
+        completed=completed,
+        step_results=results,
+    )
+
+    assert [job.state.prev_id for job in pending[:2]] == [13, 11]
+    assert {job.state.prev_id for job in pending} == set(range(10, 15))
 
 
 def test_database_load_prior_repeat_results_keeps_every_earlier_step_output():
