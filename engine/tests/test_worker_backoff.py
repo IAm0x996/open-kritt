@@ -618,9 +618,67 @@ def _pool_worker(*, worker_count, max_per_scan, scans):
     worker.db = _PoolDatabase(scans)
     worker.config = SimpleNamespace(data_dir="/tmp")
     worker.runtime_worker_count = lambda: worker_count
+    worker.runtime_memory_capacity = lambda: worker_module.MemoryCapacity(
+        configured_workers=worker_count,
+        effective_workers=worker_count,
+        total_bytes=None,
+        reserve_bytes=0,
+        runner_bytes=0,
+    )
+    worker._memory_allows_new_runner = lambda: True
     worker.runtime_max_concurrent_scans = lambda: len(scans)
     worker.runtime_max_workers_per_scan = lambda: max_per_scan
     return worker
+
+
+def test_fair_scheduler_uses_the_memory_budget_as_its_global_worker_limit():
+    scans = [{"id": 1, "inserted_at": "1"}]
+    worker = _pool_worker(worker_count=15, max_per_scan=15, scans=scans)
+    worker.runtime_memory_capacity = lambda: worker_module.MemoryCapacity(
+        configured_workers=15,
+        effective_workers=4,
+        total_bytes=8 * 1024**3,
+        reserve_bytes=2 * 1024**3,
+        runner_bytes=1536 * 1024**2,
+    )
+
+    assert [worker._reserve_scan()["id"] for _ in range(4)] == [1, 1, 1, 1]
+    assert worker._reserve_scan() is None
+
+
+def test_fair_scheduler_pauses_admission_when_live_memory_is_low():
+    scans = [{"id": 1, "inserted_at": "1"}]
+    worker = _pool_worker(worker_count=8, max_per_scan=8, scans=scans)
+    worker._memory_allows_new_runner = lambda: False
+
+    assert worker._reserve_scan() is None
+
+
+def test_live_memory_gate_preserves_the_reserve_before_admitting_a_runner():
+    worker = Worker.__new__(Worker)
+    worker.runtime_memory_reserve_bytes = lambda: int(1.25 * 1024**3)
+    worker.runtime_scan_runner_memory_reservation_mb = lambda: 800
+    worker._system_memory_available_bytes = lambda: 2 * 1024**3
+
+    assert worker._memory_allows_new_runner() is False
+
+    worker._system_memory_available_bytes = lambda: 3 * 1024**3
+    assert worker._memory_allows_new_runner() is True
+
+
+def test_worker_capacity_uses_soft_reservation_instead_of_hard_limit():
+    worker = Worker.__new__(Worker)
+    worker.config = SimpleNamespace(data_dir="/tmp")
+    worker.runtime_worker_count = lambda: 10
+    worker.runtime_memory_reserve_bytes = lambda: int(2.5 * 1024**3)
+    worker.runtime_scan_runner_memory_mb = lambda: 2048
+    worker.runtime_scan_runner_memory_reservation_mb = lambda: 768
+    worker._system_memory_total_bytes = lambda: int(11.67 * 1024**3)
+
+    capacity = worker.runtime_memory_capacity()
+
+    assert capacity.effective_workers == 10
+    assert capacity.runner_bytes == 768 * 1024**2
 
 
 def test_fair_scheduler_divides_six_workers_evenly_between_two_scans():

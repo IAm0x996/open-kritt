@@ -89,7 +89,7 @@ def marked(payload):
 
 @pytest.fixture(autouse=True)
 def isolate_unit_tests_from_external_runners(monkeypatch):
-    monkeypatch.setattr(harnesses, "_scan_docker_command", lambda cmd, _repo_dir, _env: cmd)
+    monkeypatch.setattr(harnesses, "_scan_docker_command", lambda cmd, _repo_dir, _env, **_kwargs: cmd)
     monkeypatch.setattr(workspace_module, "resolve_scan_checkout_revisions", lambda scan, **_kwargs: scan)
     monkeypatch.setattr(worker_module, "resolve_scan_checkout_revisions", lambda scan, **_kwargs: scan)
 
@@ -1494,7 +1494,11 @@ def test_tool_harness_docker_runner_is_root_writable_and_internet_enabled(monkey
 
     monkeypatch.setattr(harnesses, "_run_process", fake_run_process)
 
-    result = ClaudeHarness(timeout_seconds=5).run(
+    result = ClaudeHarness(
+        timeout_seconds=5,
+        runner_memory_mb=1536,
+        runner_memory_reservation_mb=768,
+    ).run(
         prompt="prompt",
         schema=output_schema('{"thing":"string"}', multi_output=False),
         repo_dir=str(repo_dir),
@@ -1524,6 +1528,9 @@ def test_tool_harness_docker_runner_is_root_writable_and_internet_enabled(monkey
     assert network.startswith(harnesses.SCAN_SANDBOX_NETWORK_PREFIX)
     assert "runner-image" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--workdir") + 1] == "/workspace"
+    assert captured["cmd"][captured["cmd"].index("--memory") + 1] == "1536m"
+    assert captured["cmd"][captured["cmd"].index("--memory-swap") + 1] == "1536m"
+    assert captured["cmd"][captured["cmd"].index("--memory-reservation") + 1] == "768m"
     assert "--env" in captured["cmd"]
     assert "HOME=/home/runner" in captured["cmd"]
     assert "CODEX_HOME=/home/runner/.codex" in captured["cmd"]

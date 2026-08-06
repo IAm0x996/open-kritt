@@ -33,6 +33,14 @@ from .harnesses import (
     scan_model_provider,
     validate_scan_runner_configuration,
 )
+from .memory_budget import (
+    GIB,
+    MIB,
+    MemoryCapacity,
+    calculate_memory_capacity,
+    system_memory_available_bytes,
+    system_memory_total_bytes,
+)
 from .model_catalog import ModelCatalogRefresher
 from .model_output_artifacts import record_model_error_output
 from .models import ModelSelection, model_selection_for_depth, post_processing_model_selection
@@ -201,7 +209,7 @@ class Worker:
     def run_forever(self):
         workers: dict[int, tuple[threading.Thread, threading.Event]] = {}
         generation_worker: tuple[threading.Thread, threading.Event] | None = None
-        last_desired: int | None = None
+        last_capacity: MemoryCapacity | None = None
         LOGGER.info("open-kritt engine started; live config: %s", runtime_config_path(self.config.data_dir))
         cleanup_stale_scan_sandboxes()
         cleanup_stale_workspace_snapshot_builders()
@@ -225,10 +233,27 @@ class Worker:
             if generation_worker is not None and not generation_worker[0].is_alive():
                 generation_worker = None
 
-            desired = self.runtime_worker_count()
-            if desired != last_desired:
-                LOGGER.info("engine desired worker count is %s", desired)
-                last_desired = desired
+            capacity = self.runtime_memory_capacity()
+            desired = capacity.effective_workers
+            if capacity != last_capacity:
+                if capacity.total_bytes is None:
+                    LOGGER.warning(
+                        "engine worker capacity is %s; system memory is unavailable, so the configured ceiling "
+                        "cannot be memory-budgeted",
+                        desired,
+                    )
+                else:
+                    LOGGER.info(
+                        "engine worker capacity is %s of %s configured "
+                        "(%.1f GiB total, %.1f GiB reserve, %s MiB reservation per runner, %s MiB hard cap)",
+                        desired,
+                        capacity.configured_workers,
+                        capacity.total_bytes / GIB,
+                        capacity.reserve_bytes / GIB,
+                        capacity.runner_bytes // MIB,
+                        self.runtime_scan_runner_memory_mb(),
+                    )
+                last_capacity = capacity
 
             for worker_id in sorted(workers, reverse=True):
                 if worker_id > desired:
@@ -249,6 +274,10 @@ class Worker:
                 )
                 workers[worker_id] = (thread, stop_event)
                 thread.start()
+                # Ramp capacity one worker per supervisor pass. This prevents
+                # workspace setup and model subprocess startup from peaking
+                # simultaneously when capacity is raised or the engine restarts.
+                break
 
             if desired <= 0:
                 if generation_worker is not None:
@@ -371,6 +400,66 @@ class Worker:
             maximum=128,
         )
 
+    def runtime_memory_reserve_bytes(self) -> int:
+        return int(
+            runtime_float(
+                "ENGINE_MEMORY_RESERVE_GB",
+                2.0,
+                data_dir=getattr(self.config, "data_dir", None),
+                minimum=0.0,
+                maximum=1024.0,
+            )
+            * GIB
+        )
+
+    def runtime_scan_runner_memory_mb(self) -> int:
+        return runtime_int(
+            "ENGINE_SCAN_RUNNER_MEMORY_MB",
+            1536,
+            data_dir=getattr(self.config, "data_dir", None),
+            minimum=0,
+            maximum=1024 * 1024,
+        )
+
+    def runtime_scan_runner_memory_reservation_mb(self) -> int:
+        return runtime_int(
+            "ENGINE_SCAN_RUNNER_MEMORY_RESERVATION_MB",
+            self.runtime_scan_runner_memory_mb(),
+            data_dir=getattr(self.config, "data_dir", None),
+            minimum=0,
+            maximum=1024 * 1024,
+        )
+
+    def runtime_memory_capacity(self) -> MemoryCapacity:
+        total_reader = getattr(self, "_system_memory_total_bytes", system_memory_total_bytes)
+        return calculate_memory_capacity(
+            self.runtime_worker_count(),
+            total_bytes=total_reader(),
+            reserve_bytes=self.runtime_memory_reserve_bytes(),
+            runner_bytes=self.runtime_scan_runner_memory_reservation_mb() * MIB,
+        )
+
+    def _memory_allows_new_runner(self) -> bool:
+        available_reader = getattr(self, "_system_memory_available_bytes", system_memory_available_bytes)
+        available_bytes = available_reader()
+        if available_bytes is None:
+            return True
+        reserve_bytes = self.runtime_memory_reserve_bytes()
+        runner_bytes = self.runtime_scan_runner_memory_reservation_mb() * MIB
+        allowed = available_bytes >= reserve_bytes + runner_bytes
+        was_paused = bool(getattr(self, "_memory_admission_paused", False))
+        if not allowed and not was_paused:
+            LOGGER.warning(
+                "pausing new runner admission: %.1f GiB available, %.1f GiB reserve plus %s MiB required",
+                available_bytes / GIB,
+                reserve_bytes / GIB,
+                runner_bytes // MIB,
+            )
+        elif allowed and was_paused:
+            LOGGER.info("resuming runner admission with %.1f GiB available", available_bytes / GIB)
+        self._memory_admission_paused = not allowed
+        return allowed
+
     def runtime_autoscale_scan_workers_on_provider_capacity(self) -> bool:
         return runtime_bool(
             "ENGINE_AUTOSCALE_SCAN_WORKERS_ON_PROVIDER_CAPACITY",
@@ -428,6 +517,8 @@ class Worker:
             codex_model_provider=getattr(self.config, "codex_model_provider", None),
             codex_cli_gate=self.codex_cli_gate,
             codex_max_subagents=self.runtime_codex_max_subagents(),
+            runner_memory_mb=self.runtime_scan_runner_memory_mb(),
+            runner_memory_reservation_mb=self.runtime_scan_runner_memory_reservation_mb(),
         )
 
     def recover_orphaned_metadata(self, engine_started_at):
@@ -845,6 +936,8 @@ class Worker:
 
     def _reserve_scan(self) -> dict[str, Any] | None:
         with self._scheduler_state():
+            if not self._memory_allows_new_runner():
+                return None
             with self.db.connect() as conn:
                 claim_scans = getattr(self.db, "claim_scans", None)
                 if callable(claim_scans):
@@ -869,7 +962,9 @@ class Worker:
                 scan_id: retry_at for scan_id, retry_at in self._scan_no_work_until.items() if scan_id in active_ids
             }
 
-            worker_limit = max(1, self.runtime_worker_count())
+            worker_limit = self.runtime_memory_capacity().effective_workers
+            if worker_limit <= 0:
+                return None
             if sum(self._scan_allocations.values()) >= worker_limit:
                 return None
             configured_cap = self.runtime_max_workers_per_scan()
