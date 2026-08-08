@@ -1,6 +1,17 @@
 const REPORT_KEY = '_reserved_report';
 const POC_KEY = '_reserved_poc';
 const EXPORT_FORMAT_VERSION = 1;
+export const MAX_FINDING_EXPORT_BYTES = 64 * 1024 * 1024;
+
+export class FindingExportTooLargeError extends Error {
+  constructor(limitBytes) {
+    const limitLabel =
+      limitBytes >= 1024 * 1024 ? `${Math.floor(limitBytes / (1024 * 1024))} MiB` : `${limitBytes} bytes`;
+    super(`This findings export exceeds the ${limitLabel} uncompressed size limit.`);
+    this.name = 'FindingExportTooLargeError';
+    this.limitBytes = limitBytes;
+  }
+}
 
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
@@ -217,7 +228,12 @@ function readmeMarkdown(scan, findings, findingDirectories) {
   return lines.join('\n');
 }
 
-export function createFindingExport(scan, findings, { exportedAt = new Date() } = {}) {
+export function createFindingExport(
+  scan,
+  findings,
+  { exportedAt = new Date(), maxBytes = MAX_FINDING_EXPORT_BYTES } = {}
+) {
+  const byteLimit = Number.isSafeInteger(maxBytes) && maxBytes > 0 ? maxBytes : MAX_FINDING_EXPORT_BYTES;
   const ordered = [...findings].sort(
     (left, right) =>
       (left.rank ?? Number.MAX_SAFE_INTEGER) - (right.rank ?? Number.MAX_SAFE_INTEGER) ||
@@ -230,6 +246,21 @@ export function createFindingExport(scan, findings, { exportedAt = new Date() } 
     return `finding-${ordinal}-${exportSlug(vulnerability.summary, `id-${vulnerability.id}`, 72)}`;
   });
   const files = [];
+  let totalBytes = 0;
+  const addFile = (path, content) => {
+    totalBytes += Buffer.byteLength(content, 'utf8');
+    if (totalBytes > byteLimit) throw new FindingExportTooLargeError(byteLimit);
+    files.push({ path, content });
+  };
+
+  const manifest = {
+    formatVersion: EXPORT_FORMAT_VERSION,
+    exportedAt: new Date(exportedAt).toISOString(),
+    scan: scanManifest(scan),
+    findings: ordered,
+  };
+  addFile('README.md', readmeMarkdown(scan, ordered, findingDirectories));
+  addFile('manifest.json', json(manifest));
 
   ordered.forEach((vulnerability, index) => {
     const directory = findingDirectories[index];
@@ -240,30 +271,18 @@ export function createFindingExport(scan, findings, { exportedAt = new Date() } 
       primary: primaryPostScriptSource(vulnerability, scan.postScriptName),
       enrichments: vulnerability.enrichments || [],
     };
-    files.push(
-      { path: `${directory}/finding.md`, content: findingMarkdown(vulnerability, index + 1) },
-      { path: `${directory}/finding.json`, content: json(vulnerability) },
-      { path: `${directory}/post-processing.json`, content: json(postProcessing) }
-    );
-    if (report) files.push({ path: `${directory}/report.md`, content: report.endsWith('\n') ? report : `${report}\n` });
-    if (poc) files.push({ path: `${directory}/poc.md`, content: poc.endsWith('\n') ? poc : `${poc}\n` });
+    addFile(`${directory}/finding.md`, findingMarkdown(vulnerability, index + 1));
+    addFile(`${directory}/finding.json`, json(vulnerability));
+    addFile(`${directory}/post-processing.json`, json(postProcessing));
+    if (report) addFile(`${directory}/report.md`, report.endsWith('\n') ? report : `${report}\n`);
+    if (poc) addFile(`${directory}/poc.md`, poc.endsWith('\n') ? poc : `${poc}\n`);
   });
-
-  const manifest = {
-    formatVersion: EXPORT_FORMAT_VERSION,
-    exportedAt: new Date(exportedAt).toISOString(),
-    scan: scanManifest(scan),
-    findings: ordered,
-  };
-  files.unshift(
-    { path: 'README.md', content: readmeMarkdown(scan, ordered, findingDirectories) },
-    { path: 'manifest.json', content: json(manifest) }
-  );
 
   return {
     filename: `${root}.zip`,
     root,
     files,
+    uncompressedBytes: totalBytes,
   };
 }
 

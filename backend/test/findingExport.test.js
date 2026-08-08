@@ -5,6 +5,7 @@ import {
   createFindingExport,
   exportSlug,
   findingExportAvailability,
+  FindingExportTooLargeError,
   findingPostScriptSources,
   reservedFindingMarkdown,
 } from '../src/lib/findingExport.js';
@@ -122,6 +123,20 @@ test('finding export creates safe, complete report and PoC packages', () => {
   assert.deepEqual(manifest.findings[0].dedupe.duplicateIds, ['89']);
   assert.match(files.get('README.md'), new RegExp(`${directory}/report\\.md`));
   assert.match(files.get('README.md'), new RegExp(`${directory}/poc\\.md`));
+  assert.equal(
+    bundle.uncompressedBytes,
+    [...files.values()].reduce((sum, content) => sum + Buffer.byteLength(content), 0)
+  );
+});
+
+test('finding export rejects packages above the uncompressed size cap', () => {
+  assert.throws(
+    () => createFindingExport(scan, [finding], { maxBytes: 100 }),
+    (error) =>
+      error instanceof FindingExportTooLargeError &&
+      error.limitBytes === 100 &&
+      error.message === 'This findings export exceeds the 100 bytes uncompressed size limit.'
+  );
 });
 
 test('reserved artifacts follow primary then enrichment order', () => {

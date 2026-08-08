@@ -18,7 +18,7 @@ import { lockWorkflowForScan } from '../lib/workflowLocks.js';
 import { lockPostScriptForScan } from '../lib/postScriptLocks.js';
 import { lockAgentSkillForScan } from '../lib/agentSkillLocks.js';
 import { lockScanForMutation } from '../lib/scanLocks.js';
-import { createFindingExport, findingExportAvailability } from '../lib/findingExport.js';
+import { createFindingExport, findingExportAvailability, FindingExportTooLargeError } from '../lib/findingExport.js';
 
 const router = Router();
 const DELETABLE_SCAN_STATUSES = new Set(['completed', 'stopped', 'failed', 'paused']);
@@ -410,7 +410,7 @@ router.get('/:id/export', async (req, res, next) => {
 
     const bundle = createFindingExport(assembledScan, findings);
     const archiveDate = new Date(assembledScan.updatedAt || Date.now());
-    const archive = new ZipArchive({ zlib: { level: 9 } });
+    const archive = new ZipArchive({ zlib: { level: 6 } });
     archive.on('warning', (warning) => {
       if (warning.code !== 'ENOENT' && !res.destroyed) res.destroy(warning);
     });
@@ -437,6 +437,7 @@ router.get('/:id/export', async (req, res, next) => {
       if (!res.destroyed) res.destroy(archiveError);
     }
   } catch (e) {
+    if (e instanceof FindingExportTooLargeError) return res.status(413).json({ error: e.message });
     next(e);
   }
 });
