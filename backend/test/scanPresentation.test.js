@@ -186,7 +186,12 @@ test('scan serialization distinguishes raw candidates from listed findings', () 
       commitSha: '4a7dfc2',
       repoScope: 'full',
       dependencies: [],
-      configuration: {},
+      configuration: {
+        post_processing_model: 'gpt-5.6-sol',
+        post_processing_model_provider: 'codex',
+        post_processing_harness: 'codex',
+        post_processing_thinking_effort: 'max',
+      },
       model: 'gpt-5.4',
       modelProvider: 'codex',
       harness: 'codex',
@@ -227,6 +232,11 @@ test('scan serialization distinguishes raw candidates from listed findings', () 
   assert.deepEqual(serialized.postScriptNames, ['Ease of exploitability', 'Patched since', 'Resource exhaustion']);
   assert.equal(serialized.postScripts[0].primary, true);
   assert.deepEqual(serialized.workflowDepths, [0, 1]);
+  assert.equal(serialized.postProcessingModelOverride, true);
+  assert.equal(serialized.postProcessingModel, 'gpt-5.6-sol');
+  assert.equal(serialized.postProcessingModelProvider, 'codex');
+  assert.equal(serialized.postProcessingHarness, 'codex');
+  assert.equal(serialized.postProcessingThinkingEffort, 'max');
   assert.deepEqual(serialized.modelOverrides, {
     1: {
       model: 'claude-sonnet',

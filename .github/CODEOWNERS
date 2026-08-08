@@ -18,7 +18,7 @@
 # CI / release / governance — change with extra care.
 /.github/               @harel-coffee @GabiCtrlZ
 /scripts/               @harel-coffee @GabiCtrlZ
-/legal/                 @harel-coffee @GabiCtrlZ
+/CONTRIBUTION_TERMS.md  @harel-coffee @GabiCtrlZ
 /RELEASE.md             @harel-coffee @GabiCtrlZ
 /SECURITY.md            @harel-coffee @GabiCtrlZ
 /VERSION                @harel-coffee @GabiCtrlZ

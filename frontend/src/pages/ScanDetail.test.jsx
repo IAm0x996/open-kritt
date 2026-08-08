@@ -46,6 +46,10 @@ describe('scan run settings', () => {
     model: 'gpt-5-codex',
     model_provider: 'codex',
     thinking_effort: 'medium',
+    post_processing_model_override: false,
+    post_processing_model: 'gpt-5-codex',
+    post_processing_model_provider: 'codex',
+    post_processing_harness: 'codex',
     post_processing_thinking_effort: 'low',
     harness: 'codex',
     model_overrides: {},
@@ -57,6 +61,10 @@ describe('scan run settings', () => {
       model: 'gpt-5-codex',
       model_provider: 'codex',
       thinking_effort: 'medium',
+      post_processing_model_override: false,
+      post_processing_model: 'gpt-5-codex',
+      post_processing_model_provider: 'codex',
+      post_processing_harness: 'codex',
       post_processing_thinking_effort: 'low',
       harness: 'codex',
     };
@@ -70,6 +78,10 @@ describe('scan run settings', () => {
       model: 'legacy-model',
       model_provider: 'openrouter',
       thinking_effort: 'medium',
+      post_processing_model_override: false,
+      post_processing_model: 'legacy-model',
+      post_processing_model_provider: 'openrouter',
+      post_processing_harness: 'codex',
       post_processing_thinking_effort: 'medium',
       harness: 'codex',
       model_overrides: {},
@@ -89,6 +101,43 @@ describe('scan run settings', () => {
   it('updates post-processing effort independently', () => {
     expect(runSettingsPayload({ post_processing_thinking_effort: 'medium' }, current)).toEqual({
       post_processing_thinking_effort: 'medium',
+    });
+  });
+
+  it('sets and clears an independent post-processing model selection', () => {
+    expect(
+      runSettingsPayload(
+        {
+          post_processing_model_override: true,
+          post_processing_model: 'claude-sonnet',
+          post_processing_model_provider: 'claude',
+          post_processing_harness: 'claude-code',
+          post_processing_thinking_effort: 'high',
+        },
+        current
+      )
+    ).toEqual({
+      post_processing_model: 'claude-sonnet',
+      post_processing_model_provider: 'claude',
+      post_processing_harness: 'claude-code',
+      post_processing_thinking_effort: 'high',
+    });
+
+    expect(
+      runSettingsPayload(
+        { post_processing_model_override: false },
+        {
+          ...current,
+          post_processing_model_override: true,
+          post_processing_model: 'claude-sonnet',
+          post_processing_model_provider: 'claude',
+          post_processing_harness: 'claude-code',
+        }
+      )
+    ).toEqual({
+      post_processing_model: null,
+      post_processing_model_provider: null,
+      post_processing_harness: null,
     });
   });
 

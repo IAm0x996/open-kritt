@@ -253,10 +253,12 @@ export default function ScanDetail() {
         }}
       >
         <div
+          className="scan-detail-heading"
           style={{
             display: 'flex',
             alignItems: 'flex-start',
             justifyContent: 'space-between',
+            gap: 16,
           }}
         >
           <div>
@@ -288,7 +290,7 @@ export default function ScanDetail() {
               · {scan.repoKind === 'local' ? 'local snapshot' : `@${scan.commitShort}`}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="scan-detail-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             <Button
               variant="subtle"
               style={{ height: 32 }}
@@ -1111,8 +1113,11 @@ function ScanRunSettings({
           <RuntimeSetting label="model" value={current.model} />
           <RuntimeSetting label="model_provider" value={current.model_provider || '—'} />
           <RuntimeSetting label="thinking_effort" value={current.thinking_effort || '—'} />
-          <RuntimeSetting label="post-processing effort" value={current.post_processing_thinking_effort || '—'} />
           <RuntimeSetting label="harness" value={current.harness} />
+          <RuntimeSetting label="post model" value={current.post_processing_model || '—'} />
+          <RuntimeSetting label="post provider" value={current.post_processing_model_provider || '—'} />
+          <RuntimeSetting label="post effort" value={current.post_processing_thinking_effort || '—'} />
+          <RuntimeSetting label="post harness" value={current.post_processing_harness || '—'} />
           <RuntimeSetting label="depth overrides" value={Object.keys(current.model_overrides).length || 'none'} />
           <RuntimeSetting
             label="model jobs"
@@ -1129,6 +1134,10 @@ export function runSettingsDraft(scan = {}) {
     model: scan.model || '',
     model_provider: scan.modelProvider || 'openrouter',
     thinking_effort: scan.thinkingEffort || 'medium',
+    post_processing_model_override: Boolean(scan.postProcessingModelOverride),
+    post_processing_model: scan.postProcessingModel || scan.model || '',
+    post_processing_model_provider: scan.postProcessingModelProvider || scan.modelProvider || 'openrouter',
+    post_processing_harness: scan.postProcessingHarness || scan.harness || 'codex',
     post_processing_thinking_effort: scan.postProcessingThinkingEffort || scan.thinkingEffort || 'medium',
     harness: scan.harness || 'codex',
     model_overrides: modelOverridesDraft(scan.modelOverrides),
@@ -1144,10 +1153,21 @@ function runSettingsValue(value, fallback) {
 
 export function mergeRunSettingsDraft(current = {}, patch = {}) {
   const hasModelOverrides = Object.prototype.hasOwnProperty.call(patch || {}, 'model_overrides');
+  const hasPostProcessingModelOverride = Object.prototype.hasOwnProperty.call(
+    patch || {},
+    'post_processing_model_override'
+  );
   const base = {
     model: runSettingsValue(current?.model, ''),
     model_provider: runSettingsValue(current?.model_provider, 'openrouter'),
     thinking_effort: runSettingsValue(current?.thinking_effort, 'medium'),
+    post_processing_model_override: Boolean(current?.post_processing_model_override),
+    post_processing_model: runSettingsValue(current?.post_processing_model, current?.model || ''),
+    post_processing_model_provider: runSettingsValue(
+      current?.post_processing_model_provider,
+      current?.model_provider || 'openrouter'
+    ),
+    post_processing_harness: runSettingsValue(current?.post_processing_harness, current?.harness || 'codex'),
     post_processing_thinking_effort: runSettingsValue(
       current?.post_processing_thinking_effort,
       current?.thinking_effort || 'medium'
@@ -1160,6 +1180,15 @@ export function mergeRunSettingsDraft(current = {}, patch = {}) {
     model: runSettingsValue(patch?.model, base.model),
     model_provider: runSettingsValue(patch?.model_provider, base.model_provider),
     thinking_effort: runSettingsValue(patch?.thinking_effort, base.thinking_effort),
+    post_processing_model_override: hasPostProcessingModelOverride
+      ? Boolean(patch.post_processing_model_override)
+      : base.post_processing_model_override,
+    post_processing_model: runSettingsValue(patch?.post_processing_model, base.post_processing_model),
+    post_processing_model_provider: runSettingsValue(
+      patch?.post_processing_model_provider,
+      base.post_processing_model_provider
+    ),
+    post_processing_harness: runSettingsValue(patch?.post_processing_harness, base.post_processing_harness),
     post_processing_thinking_effort: runSettingsValue(
       patch?.post_processing_thinking_effort,
       base.post_processing_thinking_effort
@@ -1181,6 +1210,21 @@ export function runSettingsPayload(draft, current) {
     payload.model_provider = normalizedDraft.model_provider;
   if (normalizedDraft.thinking_effort !== normalizedCurrent.thinking_effort)
     payload.thinking_effort = normalizedDraft.thinking_effort;
+  const postProcessingModelChanged =
+    normalizedDraft.post_processing_model !== normalizedCurrent.post_processing_model ||
+    normalizedDraft.post_processing_model_provider !== normalizedCurrent.post_processing_model_provider ||
+    normalizedDraft.post_processing_harness !== normalizedCurrent.post_processing_harness;
+  if (normalizedDraft.post_processing_model_override) {
+    if (!normalizedCurrent.post_processing_model_override || postProcessingModelChanged) {
+      payload.post_processing_model = normalizedDraft.post_processing_model.trim();
+      payload.post_processing_model_provider = normalizedDraft.post_processing_model_provider;
+      payload.post_processing_harness = normalizedDraft.post_processing_harness;
+    }
+  } else if (normalizedCurrent.post_processing_model_override) {
+    payload.post_processing_model = null;
+    payload.post_processing_model_provider = null;
+    payload.post_processing_harness = null;
+  }
   if (normalizedDraft.post_processing_thinking_effort !== normalizedCurrent.post_processing_thinking_effort)
     payload.post_processing_thinking_effort = normalizedDraft.post_processing_thinking_effort;
   if (normalizedDraft.harness !== normalizedCurrent.harness) payload.harness = normalizedDraft.harness;

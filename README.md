@@ -117,7 +117,7 @@ Use [GitHub Issues](https://github.com/Kritt-ai/open-kritt/issues) for bugs and 
 requests.
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development
-setup, test commands, Conventional Commits, and DCO sign-off requirements.
+setup, test commands, and Conventional Commit requirements.
 
 Please report security vulnerabilities privately by following [SECURITY.md](SECURITY.md), not through a public issue.
 

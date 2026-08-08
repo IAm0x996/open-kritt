@@ -25,9 +25,9 @@ git clone https://github.com/<you>/open-kritt && cd open-kritt
 ./kritt setup
 ./kritt start
 
-# 3. Make changes on a branch, commit with sign-off + Conventional Commits
+# 3. Make changes on a branch and use Conventional Commits
 git checkout -b feat/my-change
-git commit -s -m "feat(frontend): add X"
+git commit -m "feat(frontend): add X"
 
 # 4. Push and open a PR against main. CI must pass before it can merge.
 
@@ -72,34 +72,26 @@ docker compose up --build
 
 ## Commit your change
 
-Every commit must use [Conventional Commits](https://www.conventionalcommits.org/) and
-include a [Developer Certificate of Origin](https://developercertificate.org/)
-sign-off:
+Every commit must use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```bash
-git commit -s -m "fix(frontend): describe the change"
+git commit -m "fix(frontend): describe the change"
 ```
 
 Common types are `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, and `ci`. A scope
 is optional; use `feat:` or `feat(frontend):`, never `feat():`.
 
-## Copyright assignment
+## Contribution terms
 
-open·kritt's project owners require exclusive joint copyright ownership of the
-canonical project. Before a contribution can be merged, every contributor must execute
-a separate written copyright assignment transferring copyright in the contribution
-jointly to [Harel Rom and Gabriel Balko](OWNERSHIP.md). Contact the maintainers before
-beginning substantial work to arrange the agreement.
+By intentionally submitting a pull request, commit, patch, or other contribution, you
+agree to the [Contribution Terms](CONTRIBUTION_TERMS.md), including assignment of your
+transferable rights in the contribution jointly to
+[Harel Rom and Gabriel Balko](OWNERSHIP.md). Do not submit work that an employer, client,
+university, or another party owns or restricts.
 
-The DCO sign-off certifies provenance and your right to submit the contribution. It does
-not replace the copyright assignment. A pull request cannot be merged until both
-requirements are complete.
-
-Follow the [contribution ownership process](legal/README.md) and complete the
-[Contributor Copyright Assignment Agreement](legal/CONTRIBUTOR_COPYRIGHT_ASSIGNMENT.md).
-If an employer or other entity could own the work, its signed
-[Employer Disclaimer](legal/EMPLOYER_DISCLAIMER.md) is also required. Executed documents
-are stored privately and verified by a project owner before merge.
+No separate signature, contributor agreement, form, checkbox, registry, or special
+commit syntax is required. The ordinary act of submitting the contribution is the only
+assent step.
 
 ## Open a pull request
 
@@ -111,5 +103,5 @@ Push your branch and open a pull request against `main`. In the pull request:
 - Keep unrelated changes out of the diff.
 - Complete the pull request template and make sure CI passes.
 
-Assigned contributions are distributed as part of the project under the repository's
+Contributions are distributed as part of the project under the repository's
 [GNU AGPL v3.0 license](LICENSE).
