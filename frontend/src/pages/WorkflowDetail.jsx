@@ -7,7 +7,7 @@ import { Spinner, ErrorState, Button } from '../components/ui.jsx';
 import { PromptHighlight } from '../components/PromptEditor.jsx';
 import Drawer from '../components/Drawer.jsx';
 import { availableKeysForDepth, groupByDepth, workflowDeleteState } from '../lib/workflow.js';
-import { parseTemplateRefs, refResolves } from '../lib/keys.js';
+import { parseTemplateRefs, refResolves, REQUIRED_VULN_KEYS } from '../lib/keys.js';
 import { downloadWorkflowExport } from '../lib/workflowTransfer.js';
 
 export default function WorkflowDetail() {
@@ -328,7 +328,7 @@ function Connector({ level, next }) {
   );
 }
 
-function StepPanel({ step, steps, editTo, onClose }) {
+export function StepPanel({ step, steps, editTo, onClose }) {
   const available = availableKeysForDepth(steps, step.depth);
   const parsedRefs = parseTemplateRefs(step.content);
   const refs = [...new Set(parsedRefs.refs)];
@@ -526,7 +526,8 @@ function StepPanel({ step, steps, editTo, onClose }) {
               lineHeight: 1.5,
             }}
           >
-            ✓ Terminal step — emits all 9 required vulnerability keys to workflows.vulnerabilities.
+            ✓ Terminal step — emits all {REQUIRED_VULN_KEYS.length} required vulnerability keys to
+            workflows.vulnerabilities.
           </div>
         )}
 
