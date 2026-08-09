@@ -13,6 +13,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends bash ca-certificates curl git util-linux \
     && npm install --global --no-audit --no-fund npm@12.0.1 \
     && npm install --global --no-audit --no-fund @openai/codex@0.145.0 \
+    && codex --version \
     && npm install --global --no-audit --no-fund --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@2.1.215 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
