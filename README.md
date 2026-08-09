@@ -9,8 +9,9 @@
 
 **Orchestrate AI agents to find real vulnerabilities in code.**
 
-An open-source, self-hosted security research platform that turns focused AI analysis
-into de-duplicated, ranked findings with configurable validation and enrichment.
+An open-source, self-hosted security and vulnerability research platform that turns
+focused AI analysis into de-duplicated, ranked findings with configurable validation and
+enrichment.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Kritt-ai/open-kritt?sort=semver)](https://github.com/Kritt-ai/open-kritt/releases)
