@@ -8,6 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 RUN npm install --global --no-audit --no-fund @openai/codex@0.145.0 \
+    && codex --version \
     && npm install --global --no-audit --no-fund --allow-scripts=@anthropic-ai/claude-code @anthropic-ai/claude-code@2.1.215
 COPY . .
 RUN npx prisma generate
