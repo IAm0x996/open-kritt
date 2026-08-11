@@ -17,6 +17,7 @@ import {
   removeProviderFromOverview,
   replaceAccountProvider,
   startCodexWeeklyUsageUntilStarted,
+  updatePendingAccounts,
 } from './Accounts.jsx';
 
 describe('expired Codex login', () => {
@@ -262,6 +263,17 @@ describe('Codex weekly usage', () => {
     expect(html).toContain('account-weekly-spinner');
     expect(html).toContain('Manual resets');
     expect(html).toContain('3 available');
+  });
+
+  it('tracks concurrent quota starts independently', () => {
+    let pending = updatePendingAccounts(new Set(), 'reviewer', true);
+    pending = updatePendingAccounts(pending, 'researcher', true);
+
+    expect([...pending]).toEqual(['reviewer', 'researcher']);
+
+    pending = updatePendingAccounts(pending, 'reviewer', false);
+
+    expect([...pending]).toEqual(['researcher']);
   });
 
   it('shows but disables reset use when no usage window is eligible', () => {

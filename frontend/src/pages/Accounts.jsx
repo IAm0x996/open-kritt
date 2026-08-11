@@ -27,8 +27,8 @@ export default function Accounts() {
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null);
   const [removingAccount, setRemovingAccount] = useState(null);
-  const [startingUsage, setStartingUsage] = useState(null);
-  const [resettingUsage, setResettingUsage] = useState(null);
+  const [startingUsage, setStartingUsage] = useState(() => new Set());
+  const [resettingUsage, setResettingUsage] = useState(() => new Set());
   const [loadingProviders, setLoadingProviders] = useState(() => new Set());
   const [providerErrors, setProviderErrors] = useState({});
   const loadSequence = useRef(0);
@@ -137,13 +137,13 @@ export default function Accounts() {
 
   const startWeeklyUsage = async (account) => {
     setError(null);
-    setStartingUsage(account.id);
+    setStartingUsage((current) => updatePendingAccounts(current, account.id, true));
     try {
       await startCodexWeeklyUsageUntilStarted(account.id, api.startCodexWeeklyUsage, setData);
     } catch (nextError) {
       setError(nextError);
     } finally {
-      setStartingUsage(null);
+      setStartingUsage((current) => updatePendingAccounts(current, account.id, false));
     }
   };
 
@@ -152,13 +152,13 @@ export default function Accounts() {
     const label = account.email || account.label;
     if (!window.confirm(`Use 1 of ${available} manual resets for ${label}?\n\nThis cannot be undone.`)) return;
     setError(null);
-    setResettingUsage(account.id);
+    setResettingUsage((current) => updatePendingAccounts(current, account.id, true));
     try {
       setData(await api.useCodexManualReset(account.id));
     } catch (nextError) {
       setError(nextError);
     } finally {
-      setResettingUsage(null);
+      setResettingUsage((current) => updatePendingAccounts(current, account.id, false));
     }
   };
 
@@ -310,8 +310,8 @@ function ProviderCard({
               onStartWeeklyUsage={() => onStartWeeklyUsage(account)}
               onUseManualReset={() => onUseManualReset(account)}
               removing={removingAccount === `${provider.id}:${account.id}`}
-              startingUsage={startingUsage === account.id}
-              resettingUsage={resettingUsage === account.id}
+              startingUsage={startingUsage.has(account.id)}
+              resettingUsage={resettingUsage.has(account.id)}
             />
           ))
         ) : (
@@ -356,6 +356,13 @@ export function providerActionLabel(provider) {
   if (provider.id === 'codex') return signInRequired ? 'Sign in to Codex again' : 'Add Codex account';
   if (signInRequired) return 'Sign in to Claude again';
   return 'Add Claude account';
+}
+
+export function updatePendingAccounts(current, accountId, pending) {
+  const next = new Set(current);
+  if (pending) next.add(accountId);
+  else next.delete(accountId);
+  return next;
 }
 
 export function providerReloginAccountId(provider) {
