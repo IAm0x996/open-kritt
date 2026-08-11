@@ -64,6 +64,14 @@ async function persistWorkflow(valid) {
   });
 }
 
+export function workflowInUseResponse(scanCount) {
+  return {
+    error: `Cannot edit: ${scanCount} scan(s) use this workflow. Duplicate it to make changes safely.`,
+    code: 'workflow_in_use',
+    scanCount,
+  };
+}
+
 export async function replaceWorkflowIfUnused(tx, id, valid) {
   await lockWorkflowForEdit(tx, id);
   const existing = await tx.workflow.findUnique({ where: { id } });
@@ -118,9 +126,7 @@ router.put('/:id', async (req, res, next) => {
     const result = await prisma.$transaction((tx) => replaceWorkflowIfUnused(tx, id, valid));
     if (result.kind === 'not-found') return res.status(404).json({ error: 'Workflow not found.' });
     if (result.kind === 'in-use') {
-      return res.status(409).json({
-        error: `Cannot edit: ${result.scanCount} scan(s) use this workflow. Duplicate it to make changes safely.`,
-      });
+      return res.status(409).json(workflowInUseResponse(result.scanCount));
     }
 
     res.json(await assembleWorkflow(result.workflow));

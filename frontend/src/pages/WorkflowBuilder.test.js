@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { insertWorkflowDepthBefore, removeWorkflowStep, workflowDraftIsDirty } from './WorkflowBuilder.jsx';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../api/client.js';
+import {
+  insertWorkflowDepthBefore,
+  removeWorkflowStep,
+  saveWorkflowDraft,
+  WorkflowDuplicateDialog,
+  workflowDraftIsDirty,
+  workflowDuplicatePrompt,
+  workflowNeedsDuplicate,
+} from './WorkflowBuilder.jsx';
 
 const builder = { name: 'copy-of-source', description: '', levels: [] };
 
@@ -13,6 +24,88 @@ describe('workflowDraftIsDirty', () => {
     const initial = JSON.stringify(builder);
     expect(workflowDraftIsDirty(builder, initial)).toBe(false);
     expect(workflowDraftIsDirty({ ...builder, name: 'changed' }, initial)).toBe(true);
+  });
+});
+
+describe('saveWorkflowDraft', () => {
+  const payload = { name: 'carefully-edited', levels: [{ depth: 0 }] };
+  const conflict = () =>
+    new ApiError('Workflow is in use.', 409, [], {
+      code: 'workflow_in_use',
+      scanCount: 5,
+    });
+
+  it('offers to preserve an in-use workflow edit as a duplicate', async () => {
+    const updateWorkflow = vi.fn().mockRejectedValue(conflict());
+    const createWorkflow = vi.fn().mockResolvedValue({ id: 'new-workflow' });
+    const confirmDuplicate = vi.fn().mockReturnValue(true);
+
+    await expect(
+      saveWorkflowDraft({ id: 'used-workflow', payload, updateWorkflow, createWorkflow, confirmDuplicate })
+    ).resolves.toEqual({ id: 'new-workflow' });
+
+    expect(updateWorkflow).toHaveBeenCalledWith('used-workflow', payload);
+    expect(confirmDuplicate).toHaveBeenCalledWith(
+      'This workflow cannot be edited because it is used by 5 scans.\n\nSave a duplicate with your changes instead?'
+    );
+    expect(createWorkflow).toHaveBeenCalledWith(payload);
+  });
+
+  it('keeps the unsaved draft in place when duplication is declined', async () => {
+    const createWorkflow = vi.fn();
+
+    await expect(
+      saveWorkflowDraft({
+        id: 'used-workflow',
+        payload,
+        updateWorkflow: vi.fn().mockRejectedValue(conflict()),
+        createWorkflow,
+        confirmDuplicate: vi.fn().mockReturnValue(false),
+      })
+    ).resolves.toBeNull();
+
+    expect(createWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('does not turn unrelated conflicts into duplicates', async () => {
+    const error = new ApiError('Another conflict.', 409);
+    const confirmDuplicate = vi.fn();
+
+    await expect(
+      saveWorkflowDraft({
+        id: 'used-workflow',
+        payload,
+        updateWorkflow: vi.fn().mockRejectedValue(error),
+        createWorkflow: vi.fn(),
+        confirmDuplicate,
+      })
+    ).rejects.toBe(error);
+
+    expect(workflowNeedsDuplicate(error)).toBe(false);
+    expect(confirmDuplicate).not.toHaveBeenCalled();
+  });
+
+  it('uses singular scan wording in the confirmation', () => {
+    const error = new ApiError('Workflow is in use.', 409, [], { code: 'workflow_in_use', scanCount: 1 });
+
+    expect(workflowDuplicatePrompt(error)).toContain('used by 1 scan');
+  });
+
+  it('renders the duplicate choice as an accessible in-app dialog', () => {
+    const html = renderToStaticMarkup(
+      createElement(WorkflowDuplicateDialog, {
+        message: 'This workflow cannot be edited because it is used by 5 scans.',
+        saving: false,
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+      })
+    );
+
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('Workflow already in use');
+    expect(html).toContain('Keep editing');
+    expect(html).toContain('Save duplicate');
   });
 });
 

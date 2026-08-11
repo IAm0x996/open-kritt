@@ -19,7 +19,7 @@ import {
   scanLaunchDecision,
   validateScanRuntimeUpdate,
 } from '../src/routes/scans.js';
-import { deleteWorkflowIfUnused, replaceWorkflowIfUnused } from '../src/routes/workflows.js';
+import { deleteWorkflowIfUnused, replaceWorkflowIfUnused, workflowInUseResponse } from '../src/routes/workflows.js';
 
 test('scan creation requests a launch choice only while another scan is active', () => {
   assert.deepEqual(scanLaunchDecision({}, 0), { kind: 'ready', status: 'pending' });
@@ -61,6 +61,14 @@ test('referenced workflows cannot be rewritten or have their steps deleted', asy
 
   assert.deepEqual(result, { kind: 'in-use', scanCount: 3 });
   assert.deepEqual(mutations, []);
+});
+
+test('workflow edit conflicts identify the safe duplicate path', () => {
+  assert.deepEqual(workflowInUseResponse(3), {
+    error: 'Cannot edit: 3 scan(s) use this workflow. Duplicate it to make changes safely.',
+    code: 'workflow_in_use',
+    scanCount: 3,
+  });
 });
 
 test('referenced workflows cannot be deleted after taking the workflow row lock', async () => {

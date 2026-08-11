@@ -3,7 +3,8 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError, apiErrorMessages } from '../api/client.js';
 import { usePageChrome } from '../context/ui.jsx';
 import { useUnsavedChangesPrompt } from '../lib/useUnsavedChangesPrompt.js';
-import { ErrorState, Spinner, Toggle } from '../components/ui.jsx';
+import { useModalDialog } from '../lib/useModalDialog.js';
+import { Button, ErrorState, Spinner, Toggle } from '../components/ui.jsx';
 import { PromptEditor } from '../components/PromptEditor.jsx';
 import SchemaEditor from '../components/SchemaEditor.jsx';
 import { resultFromCompletedGeneration, workflowBuilderFromGeneration } from '../lib/generationDraft.js';
@@ -57,6 +58,30 @@ function workflowSnapshot(builder) {
 
 export function workflowDraftIsDirty(builder, initialSnapshot, unsavedSource = false) {
   return !!builder && (unsavedSource || (initialSnapshot !== null && workflowSnapshot(builder) !== initialSnapshot));
+}
+
+export function workflowNeedsDuplicate(error) {
+  return error instanceof ApiError && error.status === 409 && error.code === 'workflow_in_use';
+}
+
+export function workflowDuplicatePrompt(error) {
+  const scanCount = error?.data?.scanCount;
+  const usage = Number.isInteger(scanCount)
+    ? `it is used by ${scanCount} ${scanCount === 1 ? 'scan' : 'scans'}`
+    : 'it is already used in scans';
+  return `This workflow cannot be edited because ${usage}.\n\nSave a duplicate with your changes instead?`;
+}
+
+export async function saveWorkflowDraft({ id, payload, updateWorkflow, createWorkflow, confirmDuplicate }) {
+  if (!id) return createWorkflow(payload);
+
+  try {
+    return await updateWorkflow(id, payload);
+  } catch (error) {
+    if (!workflowNeedsDuplicate(error)) throw error;
+    if (!(await confirmDuplicate(workflowDuplicatePrompt(error)))) return null;
+    return createWorkflow(payload);
+  }
 }
 
 const BATCH_DEPTH_REFERENCE = /(\{\{\s*)multi_output_depth_(\d+)(\s*\}\})/g;
@@ -202,6 +227,8 @@ export default function WorkflowBuilder() {
   const [loadError, setLoadError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [serverErrors, setServerErrors] = useState([]);
+  const [duplicatePrompt, setDuplicatePrompt] = useState(null);
+  const duplicateConfirmationRef = useRef(null);
   const initialRef = useRef(b ? workflowSnapshot(b) : null);
 
   usePageChrome(
@@ -215,10 +242,13 @@ export default function WorkflowBuilder() {
 
   useEffect(() => {
     let active = true;
+    duplicateConfirmationRef.current?.(false);
+    duplicateConfirmationRef.current = null;
     initialRef.current = null;
     setLoadError(null);
     setServerErrors([]);
     setSaving(false);
+    setDuplicatePrompt(null);
     setB(null);
     if (generationId) {
       api
@@ -257,6 +287,14 @@ export default function WorkflowBuilder() {
       active = false;
     };
   }, [generationId, id, fromId, selectedStepId]);
+
+  useEffect(
+    () => () => {
+      duplicateConfirmationRef.current?.(false);
+      duplicateConfirmationRef.current = null;
+    },
+    []
+  );
 
   // Track unsaved changes by comparing the meaningful builder state (name,
   // description, levels) against the initial snapshot — ignoring UI-only state
@@ -424,6 +462,24 @@ export default function WorkflowBuilder() {
   if (!b.name.trim()) errors.push('Name your workflow');
   const canSave = errors.length === 0 && !saving;
 
+  const requestDuplicateConfirmation = (message) => {
+    setSaving(false);
+    setDuplicatePrompt(message);
+    return new Promise((resolve) => {
+      duplicateConfirmationRef.current = resolve;
+    });
+  };
+
+  const answerDuplicateConfirmation = (confirmed) => {
+    if (saving) return;
+    const resolve = duplicateConfirmationRef.current;
+    if (!resolve) return;
+    duplicateConfirmationRef.current = null;
+    if (confirmed) setSaving(true);
+    else setDuplicatePrompt(null);
+    resolve(confirmed);
+  };
+
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
@@ -440,10 +496,22 @@ export default function WorkflowBuilder() {
       })),
     };
     try {
-      const wf = id ? await api.updateWorkflow(id, payload) : await api.createWorkflow(payload);
+      const wf = await saveWorkflowDraft({
+        id,
+        payload,
+        updateWorkflow: api.updateWorkflow,
+        createWorkflow: api.createWorkflow,
+        confirmDuplicate: requestDuplicateConfirmation,
+      });
+      if (!wf) {
+        setDuplicatePrompt(null);
+        setSaving(false);
+        return;
+      }
       allow(); // intentional navigation — don't prompt about unsaved changes
       navigate(`/workflows/${wf.id}`);
     } catch (e) {
+      setDuplicatePrompt(null);
       if (e instanceof ApiError) setServerErrors(apiErrorMessages(e, { includeField: false }));
       else setServerErrors([e.message]);
       setSaving(false);
@@ -978,6 +1046,78 @@ export default function WorkflowBuilder() {
                 : 'Save workflow'
               : `${errors.length} issue${errors.length > 1 ? 's' : ''} to fix`}
         </button>
+      </div>
+
+      {duplicatePrompt && (
+        <WorkflowDuplicateDialog
+          message={duplicatePrompt}
+          saving={saving}
+          onConfirm={() => answerDuplicateConfirmation(true)}
+          onCancel={() => answerDuplicateConfirmation(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+export function WorkflowDuplicateDialog({ message, saving, onConfirm, onCancel }) {
+  const closeDialog = () => {
+    if (!saving) onCancel();
+  };
+  const dialogRef = useModalDialog(closeDialog);
+
+  return (
+    <div
+      onClick={closeDialog}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 80,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        background: 'rgba(0,0,0,.38)',
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="duplicate-workflow-title"
+        aria-describedby="duplicate-workflow-description"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: 440,
+          maxWidth: '100%',
+          padding: 22,
+          border: '1px solid var(--border)',
+          borderRadius: 12,
+          background: 'var(--surface)',
+          boxShadow: '0 18px 50px rgba(0,0,0,.28)',
+        }}
+      >
+        <div id="duplicate-workflow-title" style={{ fontSize: 17, fontWeight: 600 }}>
+          Workflow already in use
+        </div>
+        <div
+          id="duplicate-workflow-description"
+          style={{ marginTop: 10, color: 'var(--text-2)', fontSize: 13.5, lineHeight: 1.55, whiteSpace: 'pre-line' }}
+        >
+          {message}
+        </div>
+        <div style={{ marginTop: 10, color: 'var(--text-3)', fontSize: 12.5, lineHeight: 1.5 }}>
+          Existing scans will continue using the original workflow.
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 9, marginTop: 22 }}>
+          <Button variant="ghost" disabled={saving} onClick={onCancel}>
+            Keep editing
+          </Button>
+          <Button data-autofocus disabled={saving} onClick={onConfirm}>
+            {saving ? 'Saving duplicate…' : 'Save duplicate'}
+          </Button>
+        </div>
       </div>
     </div>
   );

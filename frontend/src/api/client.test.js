@@ -200,6 +200,30 @@ describe('scan lifecycle API', () => {
 });
 
 describe('workflow lifecycle API', () => {
+  it('preserves machine-readable workflow conflict details', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        error: 'Workflow is in use.',
+        code: 'workflow_in_use',
+        scanCount: 5,
+      }),
+    });
+
+    try {
+      await expect(api.updateWorkflow('27', { name: 'edited' })).rejects.toMatchObject({
+        message: 'Workflow is in use.',
+        status: 409,
+        code: 'workflow_in_use',
+        data: { scanCount: 5 },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('deletes a workflow with DELETE', async () => {
     const originalFetch = globalThis.fetch;
     let request;

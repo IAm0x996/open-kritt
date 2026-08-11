@@ -36,11 +36,13 @@ const BASE = resolveApiBase(
 );
 
 export class ApiError extends Error {
-  constructor(message, status, errors) {
+  constructor(message, status, errors, data = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.errors = errors || [];
+    this.code = data?.code || null;
+    this.data = data;
   }
 }
 
@@ -73,7 +75,7 @@ async function request(path, options = {}) {
     /* no body */
   }
   if (!res.ok) {
-    throw new ApiError(data?.error || `Request failed (${res.status})`, res.status, data?.errors);
+    throw new ApiError(data?.error || `Request failed (${res.status})`, res.status, data?.errors, data);
   }
   return data;
 }
