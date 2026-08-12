@@ -25,6 +25,12 @@ new-workflow dialog. After you choose a file, open·kritt validates it with the 
 as the workflow builder and creates a new workflow. The imported workflow opens when the
 import completes.
 
+On a headless installation, copy the exported file to the server and run:
+
+```bash
+./kritt-headless import workflow ./example.workflow.json
+```
+
 The importer accepts both versioned workflow files and bare workflow JSON containing
 either `levels` or the flat `steps` returned by the workflow API. Files must be 2 MB or
 smaller.

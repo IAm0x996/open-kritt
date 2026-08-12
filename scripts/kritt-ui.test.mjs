@@ -6,10 +6,12 @@ import test from 'node:test';
 
 import { parseEnv } from './kritt-lib.mjs';
 import {
+  FullscreenTerminal,
   TerminalCancelledError,
   isInteractiveTerminal,
   keyToIntent,
   moveSelection,
+  renderDocumentScreen,
   renderInputScreen,
   renderMenuScreen,
   runInteractiveCli,
@@ -132,7 +134,7 @@ test('screen renderers fill the requested terminal height and never reveal secre
   assert.match(input, /•+/);
 });
 
-test('menu options and footer stay visible on a short terminal even with many detail lines', () => {
+test('long menus keep the selection and footer visible on a short terminal', () => {
   const options = [
     { id: 'codex-login', label: 'Codex login', description: 'recommended - sign in with a device code' },
     { id: 'claude-login', label: 'Claude login', description: 'sign in with a Claude subscription' },
@@ -164,7 +166,83 @@ test('menu options and footer stay visible on a short terminal even with many de
   });
 
   assert.match(screen, /› Claude login/);
-  for (const option of options) assert.match(screen, new RegExp(option.label));
+  assert.match(screen, /↑↓ navigate/);
+  assert.match(screen, /2\/8/);
+  assert.doesNotMatch(screen, /GitHub token/);
+
+  const bottomScreen = renderMenuScreen({
+    title: 'Setup',
+    subtitle: 'Choose one option to configure model access',
+    details,
+    options,
+    selected: 7,
+    rows: 14,
+    width: 90,
+  });
+
+  assert.match(bottomScreen, /› Back/);
+  assert.match(bottomScreen, /GitHub token/);
+  assert.match(bottomScreen, /8\/8/);
+});
+
+test('document screens fill the terminal, scroll, and retain semantic color', () => {
+  const screen = renderDocumentScreen({
+    title: 'Scan #12',
+    subtitle: 'acme/service',
+    lines: [
+      { text: 'Scan 12 · failed', tone: 'danger' },
+      ...Array.from({ length: 15 }, (_, index) => `Detail ${index + 1}`),
+    ],
+    offset: 4,
+    rows: 14,
+    width: 70,
+    colorEnabled: true,
+  });
+
+  assert.equal(screen.split('\n').length, 14);
+  assert.match(screen, /Detail 4/);
+  assert.match(screen, /5–10\/16/);
+  assert.match(screen, /↑↓ scroll/);
+
+  const topScreen = renderDocumentScreen({
+    title: 'Scan #12',
+    subtitle: 'acme/service',
+    lines: [{ text: 'Scan 12 · failed', tone: 'danger' }],
+    colorEnabled: true,
+  });
+  assert.match(topScreen, /\x1B\[38;5;196mScan 12 · failed/);
+});
+
+test('multi-select uses Space to toggle and explains required selections', async () => {
+  const screens = [];
+  const intents = [
+    { type: 'enter' },
+    { type: 'text', value: ' ' },
+    { type: 'down' },
+    { type: 'text', value: ' ' },
+    { type: 'enter' },
+  ];
+  const output = {
+    rows: 18,
+    columns: 70,
+    on() {},
+    off() {},
+    write() {},
+  };
+  const terminal = new FullscreenTerminal({ io: { input: {}, output, error: output }, colorEnabled: false });
+  terminal.render = (screen) => screens.push(screen);
+  terminal.nextIntent = async () => intents.shift();
+
+  const selected = await terminal.chooseMany({
+    title: 'Post-scripts',
+    subtitle: 'Create scan',
+    options: [{ label: 'Report' }, { label: 'PoC' }],
+    required: true,
+  });
+
+  assert.deepEqual(selected, [0, 1]);
+  assert.ok(screens.some((screen) => screen.includes('Select at least one item')));
+  assert.ok(screens.some((screen) => screen.includes('[✓] Report')));
 });
 
 test('menu details can carry semantic color without changing their text', () => {

@@ -94,7 +94,7 @@ Before proposing a change, run the checks for every area touched:
 | Frontend | `cd frontend && npm install && npm run lint && npm run format:check && npm test && npm run build` |
 | Backend | `cd backend && npm install && npx prisma generate && npx prisma validate && npm run lint && npm run format:check && npm test` |
 | Engine | `cd engine && pip install -r requirements.txt && ruff check . && ruff format --check . && pytest` |
-| CLI | `node --test scripts/kritt.test.mjs scripts/kritt-ui.test.mjs` |
+| CLI | `node --test scripts/kritt.test.mjs scripts/kritt-ui.test.mjs scripts/kritt-headless.test.mjs` |
 | Documentation | `cd docs-site && npm run check-links` |
 
 Engine tests are currently local-only; CI does not run them. For changes crossing

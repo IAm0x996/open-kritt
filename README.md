@@ -80,6 +80,18 @@ Open [http://localhost:5173](http://localhost:5173) once the stack is running. Y
 need one model-access option; `./kritt setup` guides you through the available logins and
 API keys. A `GITHUB_TOKEN` is optional and only needed for private GitHub repositories.
 
+On a server without a browser or desktop, leave the stack running and open another shell:
+
+```bash
+./kritt-headless
+```
+
+The headless CLI imports portable workflow, post-script, skill, and ranker JSON; creates
+scans with the same backend validation as the web form; displays scan status, stages, and
+failure reasons; edits non-secret runtime settings; and exports finding bundles. It does
+not display finding contents in the terminal. See the
+[headless CLI guide](docs-site/getting-started/headless-cli.mdx).
+
 The default ports bind to `127.0.0.1`, and the backend does not include application
 authentication. Keep the stack private.
 
@@ -105,6 +117,7 @@ npm run dev
 Open [http://localhost:3001](http://localhost:3001) to view the site.
 
 - [Product overview](docs-site/getting-started/welcome.mdx)
+- [Use open·kritt without a graphical interface](docs-site/getting-started/headless-cli.mdx)
 - [Run your first scan](docs-site/first-scan/workflow.mdx)
 - [Workflows and prompt steps](docs-site/workflows/steps.mdx)
 - [Security and threat model](docs/threat-model.md)

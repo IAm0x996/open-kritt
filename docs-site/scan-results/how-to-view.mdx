@@ -32,6 +32,11 @@ the ranking rules you set on the scan, so the highest-priority results sit at th
 
 Click any finding to open the [vulnerability view](/scan-results/vulnerability-view).
 
+On a terminal-only host, `./kritt-headless scan show <id>` displays scan state, progress,
+active execution stages, and recent failure reasons without printing finding contents.
+Use `./kritt-headless scan export <id>` to save the result ZIP to the repository root, or
+provide a destination directory or `.zip` path. See the [headless CLI guide](/getting-started/headless-cli).
+
 <Note>
   Findings appear as the scan progresses - you don't have to wait for `completed` to start
   triaging what's already come in.
