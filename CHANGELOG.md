@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.4.0](https://github.com/Kritt-ai/open-kritt/compare/v1.3.0...v1.4.0) (2026-08-12)
+
+
+### Features
+
+* **accounts:** show Codex reset-credit expirations ([8168411](https://github.com/Kritt-ai/open-kritt/commit/8168411e70113463490c45f0ea1036db28b01164))
+* added steps binding feature ([81b6367](https://github.com/Kritt-ai/open-kritt/commit/81b63673a9f4e94ee204ef395ed028af788d3a15))
+* create kritt-headless runner for remote machines ([8e8dd60](https://github.com/Kritt-ai/open-kritt/commit/8e8dd60ae28446cb00ed8de76c5fa0231cadcce3))
+* **engine:** add deterministic resume ordering controls ([4be52c8](https://github.com/Kritt-ai/open-kritt/commit/4be52c86ba8d3255ac8bb390e31ba21b6468d52e))
+* **engine:** add memory-aware runner admission ([7f47690](https://github.com/Kritt-ai/open-kritt/commit/7f47690b3f26054dc0858f483710a1151fd7d429))
+* **engine:** add memory-aware runner controls ([297fc93](https://github.com/Kritt-ai/open-kritt/commit/297fc93f5b36745a1da2a683043fa9da381b0a35))
+* export completed scan findings ([36a4685](https://github.com/Kritt-ai/open-kritt/commit/36a4685a6a6ff6ee58b5a446351fc130b0c62ad0))
+* **frontend:** add community star support ([#58](https://github.com/Kritt-ai/open-kritt/issues/58)) ([3597248](https://github.com/Kritt-ai/open-kritt/commit/3597248077c906ecbb8a0d2c72dcb2673d1ad9a9))
+
+
+### Bug Fixes
+
+* allow partial exports for scans ([078147f](https://github.com/Kritt-ai/open-kritt/commit/078147f1f3b917d7384fbfe56e111ac0d199d254))
+* **compose:** persist checkout cache and restart engine ([a20eed5](https://github.com/Kritt-ai/open-kritt/commit/a20eed5bcf804990bab9614ae7722d6d72f04d14))
+* editting existing workflow should duplicate ([d4df519](https://github.com/Kritt-ai/open-kritt/commit/d4df519252ec410fa352b48e02eea28e87f78578))
+* **engine:** retry quota-limited scans sooner ([9b817ed](https://github.com/Kritt-ai/open-kritt/commit/9b817ede36bc5637427ec57d7826b9810ebd1ec0))
+* **engine:** validate Codex CLI installations ([9d7f658](https://github.com/Kritt-ai/open-kritt/commit/9d7f6588171f5fcbc950c526313e593d993ce424))
+* **engine:** validate Codex CLI installations ([b8489ce](https://github.com/Kritt-ai/open-kritt/commit/b8489ce5dfefa0391c0db9494a7adf805d803079))
+* **export:** bound findings archive resources ([b2cfc5b](https://github.com/Kritt-ai/open-kritt/commit/b2cfc5be39dff1ad928bf03042eaa2532e20a718))
+* **frontend:** allow concurrent account quota starts ([92c53ec](https://github.com/Kritt-ai/open-kritt/commit/92c53ec2f34e9f7c7de3205cd5b5f626783a2614))
+* **frontend:** allow concurrent account quota starts ([43086b3](https://github.com/Kritt-ai/open-kritt/commit/43086b38dc0cc6d8207ea21b4e515a6888d4eabb))
+* **frontend:** render real required vulnerability key count on terminal step ([51719c6](https://github.com/Kritt-ai/open-kritt/commit/51719c67bc206809fcbd1304071fc411a89d2794))
+* **frontend:** render real required vulnerability key count on terminal step ([bb62f50](https://github.com/Kritt-ai/open-kritt/commit/bb62f50fa5e7c5a56252502b7d48e9197700c723)), closes [#57](https://github.com/Kritt-ai/open-kritt/issues/57)
+
 ## [1.3.0](https://github.com/Kritt-ai/open-kritt/compare/v1.2.0...v1.3.0) (2026-08-04)
 
 
