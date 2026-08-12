@@ -48,7 +48,10 @@ over their prompts, workflows, model providers, and infrastructure.
 - **Verify findings** — use post-scripts to validate issues, build proofs of concept, and
   produce reports.
 - **Export scan results** — package canonical findings, structured data, post-processing
-  output, reports, and proofs of concept in one ZIP archive.
+  output, reports, and proofs of concept in one ZIP archive with a share-safe manifest;
+  completed scans produce complete exports, while stopped or failed scans with findings
+  produce clearly marked partial exports. Attacker-influenced report and PoC source is
+  kept as plain text.
 - **Prioritize results** — apply custom severity rankers, a consistent finding schema,
   and automatic de-duplication.
 - **Bring your own model access** — use a Codex login or connect through OpenAI,

@@ -41,14 +41,23 @@ export function scanActions(status) {
 }
 
 export function scanFindingExportAvailability(scan) {
-  if (scan?.status !== 'completed') {
+  if (!['completed', 'stopped', 'failed'].includes(scan?.status)) {
     return {
       ready: false,
-      message: 'Available after the scan and post-processing are complete.',
+      message: 'Available after the scan completes, stops, or fails.',
     };
   }
   if (!Number(scan?.findings)) return { ready: false, message: 'This scan has no findings to export.' };
-  return { ready: true, message: 'Download every canonical finding, report, PoC, and post-processing result.' };
+  if (scan.status !== 'completed') {
+    return {
+      ready: true,
+      message: `Download a partial export from this ${scan.status} scan. Some findings or post-processing artifacts may be missing.`,
+    };
+  }
+  return {
+    ready: true,
+    message: 'Download a share-safe index and untrusted finding, report, PoC, and post-processing content.',
+  };
 }
 
 export async function loadModelReferences(fetchProviders, fetchCatalog) {

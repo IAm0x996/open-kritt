@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { ZipArchive } from 'archiver';
 import { Router } from 'express';
+import { Readable } from 'node:stream';
 import { prisma } from '../db.js';
 import {
   validateScan,
@@ -10,7 +11,7 @@ import {
   ValidationError,
 } from '../lib/validation.js';
 import { assembleScans, assembleScan } from '../lib/repo.js';
-import { serializeVulnerability } from '../lib/serialize.js';
+import { repoDisplayName, serializeVulnerability } from '../lib/serialize.js';
 import { SCAN_STATUSES, extractExtraKeys } from '../lib/constants.js';
 import { localRepoNames } from '../lib/localRepos.js';
 import { assertModelSelectionAvailable } from '../lib/modelSelection.js';
@@ -18,9 +19,24 @@ import { lockWorkflowForScan } from '../lib/workflowLocks.js';
 import { lockPostScriptForScan } from '../lib/postScriptLocks.js';
 import { lockAgentSkillForScan } from '../lib/agentSkillLocks.js';
 import { lockScanForMutation } from '../lib/scanLocks.js';
-import { createFindingExport, findingExportAvailability, FindingExportTooLargeError } from '../lib/findingExport.js';
+import {
+  createFindingExport,
+  createFindingExportLimiter,
+  FINDING_EXPORT_STATUSES,
+  findingExportAvailability,
+  FindingExportBusyError,
+  FindingExportSourceTooLargeError,
+  FindingExportTooLargeError,
+  FindingExportTooManyFindingsError,
+  FindingExportTooManyRelatedRecordsError,
+  MAX_FINDING_EXPORT_FINDINGS,
+  MAX_FINDING_EXPORT_RELATED_RECORDS,
+  MAX_FINDING_EXPORT_SOURCE_BYTES,
+  MAX_FINDING_EXPORT_SOURCE_RECORD_BYTES,
+} from '../lib/findingExport.js';
 
 const router = Router();
+const runFindingExport = createFindingExportLimiter();
 const DELETABLE_SCAN_STATUSES = new Set(['completed', 'stopped', 'failed', 'paused']);
 export const ACTIVE_SCAN_STATUSES = ['prewarming_cache', 'running', 'post_processing'];
 export const SCAN_LAUNCH_POLICIES = ['immediate', 'queue'];
@@ -103,18 +119,30 @@ export async function deleteScanOwnedData(tx, scanId) {
   await tx.scan.delete({ where: { id: scanId } });
 }
 
-export async function serializedScanVulnerabilities(scanId, { includeDuplicates = false, db = prisma } = {}) {
-  const allVulns = await db.vulnerability.findMany({
-    where: { scanId },
+export async function serializedScanVulnerabilities(
+  scanId,
+  { includeDuplicates = false, maxFindings = null, maxRelatedRecords = null, db = prisma } = {}
+) {
+  const bounded = Number.isSafeInteger(maxFindings) && maxFindings > 0;
+  const relatedBounded = Number.isSafeInteger(maxRelatedRecords) && maxRelatedRecords > 0;
+  const where = includeDuplicates
+    ? { scanId }
+    : { scanId, OR: [{ dedupeIsCanonical: true }, { dedupeIsCanonical: null }] };
+  const vulns = await db.vulnerability.findMany({
+    where,
     orderBy: [{ rank: 'asc' }, { id: 'asc' }],
+    ...(bounded ? { take: maxFindings + 1 } : {}),
   });
-  const vulns = includeDuplicates
-    ? allVulns
-    : allVulns.filter((vulnerability) => vulnerability.dedupeIsCanonical !== false);
+  if (bounded && vulns.length > maxFindings) throw new FindingExportTooManyFindingsError(maxFindings);
+  const vulnerabilityIds = vulns.map((vulnerability) => vulnerability.id);
   const enrichments = await db.vulnerabilityEnrichment.findMany({
-    where: { scanId },
+    where: { scanId, vulnerabilityId: { in: vulnerabilityIds } },
     orderBy: [{ id: 'asc' }],
+    ...(relatedBounded ? { take: maxRelatedRecords + 1 } : {}),
   });
+  if (relatedBounded && enrichments.length > maxRelatedRecords) {
+    throw new FindingExportTooManyRelatedRecordsError(maxRelatedRecords, 'post-processing records');
+  }
   const enrichmentsByVulnerability = new Map();
   for (const enrichment of enrichments) {
     const key = enrichment.vulnerabilityId.toString();
@@ -122,7 +150,22 @@ export async function serializedScanVulnerabilities(scanId, { includeDuplicates 
     enrichmentsByVulnerability.get(key).push(enrichment);
   }
   const duplicateIdsByCanonical = new Map();
-  for (const vulnerability of allVulns) {
+  const duplicates = includeDuplicates
+    ? vulns
+    : await db.vulnerability.findMany({
+        where: {
+          scanId,
+          dedupeIsCanonical: false,
+          dedupeCanonicalId: { in: vulnerabilityIds },
+        },
+        select: { id: true, dedupeIsCanonical: true, dedupeCanonicalId: true },
+        orderBy: [{ id: 'asc' }],
+        ...(relatedBounded ? { take: maxRelatedRecords + 1 } : {}),
+      });
+  if (relatedBounded && duplicates.length > maxRelatedRecords) {
+    throw new FindingExportTooManyRelatedRecordsError(maxRelatedRecords, 'duplicate records');
+  }
+  for (const vulnerability of duplicates) {
     if (vulnerability.dedupeIsCanonical !== false || !vulnerability.dedupeCanonicalId) continue;
     const key = vulnerability.dedupeCanonicalId.toString();
     if (!duplicateIdsByCanonical.has(key)) duplicateIdsByCanonical.set(key, []);
@@ -134,6 +177,58 @@ export async function serializedScanVulnerabilities(scanId, { includeDuplicates 
       duplicateIds: duplicateIdsByCanonical.get(vulnerability.id.toString()) || [],
     })
   );
+}
+
+export async function findingExportSourceProfile(scanId, { db = prisma } = {}) {
+  const [profile] = await db.$queryRaw(
+    Prisma.sql`
+      WITH canonical AS (
+        SELECT
+          id,
+          COALESCE(octet_length(json_answer::text), 0) +
+          COALESCE(octet_length(post_script_answer::text), 0) +
+          COALESCE(octet_length(comments), 0) +
+          COALESCE(octet_length(dedupe_reason), 0) +
+          COALESCE(octet_length(bounty_rank_response::text), 0) +
+          COALESCE(octet_length(bounty_rank_reasoning), 0) +
+          COALESCE(octet_length(rank_root_bug), 0) +
+          COALESCE(octet_length(bounty_rank_missing_from_prompt), 0) AS bytes
+        FROM workflows.vulnerabilities
+        WHERE scan_id = ${scanId} AND dedupe_is_canonical IS DISTINCT FROM FALSE
+      ),
+      enrichment AS (
+        SELECT
+          COALESCE(octet_length(e.post_script_name), 0) +
+          COALESCE(octet_length(e.result::text), 0) +
+          COALESCE(octet_length(e.stub_explanation), 0) AS bytes
+        FROM workflows.vulnerability_enrichments e
+        INNER JOIN canonical c ON c.id = e.vulnerability_id
+      ),
+      duplicate AS (
+        SELECT v.id
+        FROM workflows.vulnerabilities v
+        INNER JOIN canonical c ON c.id = v.dedupe_canonical_id
+        WHERE v.scan_id = ${scanId} AND v.dedupe_is_canonical = FALSE
+      )
+      SELECT
+        (SELECT COUNT(*) FROM canonical) AS "findingCount",
+        (SELECT COUNT(*) FROM enrichment) AS "enrichmentCount",
+        (SELECT COUNT(*) FROM duplicate) AS "duplicateCount",
+        (SELECT COALESCE(SUM(bytes), 0) FROM canonical) +
+          (SELECT COALESCE(SUM(bytes), 0) FROM enrichment) AS "totalBytes",
+        GREATEST(
+          (SELECT COALESCE(MAX(bytes), 0) FROM canonical),
+          (SELECT COALESCE(MAX(bytes), 0) FROM enrichment)
+        ) AS "largestRecordBytes"
+    `
+  );
+  return {
+    findingCount: BigInt(profile?.findingCount ?? 0),
+    enrichmentCount: BigInt(profile?.enrichmentCount ?? 0),
+    duplicateCount: BigInt(profile?.duplicateCount ?? 0),
+    totalBytes: BigInt(profile?.totalBytes ?? 0),
+    largestRecordBytes: BigInt(profile?.largestRecordBytes ?? 0),
+  };
 }
 
 export async function lockScanConfigurationResources(tx, { workflowId, postScriptIds, agentSkillIds }) {
@@ -397,47 +492,122 @@ router.get('/:id/vulnerabilities', async (req, res, next) => {
   }
 });
 
-// GET /api/scans/:id/export — complete canonical finding package for a completed scan.
+// GET /api/scans/:id/export — canonical findings from a terminal scan.
 router.get('/:id/export', async (req, res, next) => {
   try {
-    const id = BigInt(req.params.id);
-    const scan = await prisma.scan.findUnique({ where: { id } });
-    if (!scan) return res.status(404).json({ error: 'Scan not found.' });
-
-    const [assembledScan, findings] = await Promise.all([assembleScan(scan), serializedScanVulnerabilities(id)]);
-    const availability = findingExportAvailability(assembledScan, findings.length);
-    if (!availability.ready) return res.status(409).json({ error: availability.message });
-
-    const bundle = createFindingExport(assembledScan, findings);
-    const archiveDate = new Date(assembledScan.updatedAt || Date.now());
-    const archive = new ZipArchive({ zlib: { level: 6 } });
-    archive.on('warning', (warning) => {
-      if (warning.code !== 'ENOENT' && !res.destroyed) res.destroy(warning);
-    });
-    archive.on('error', (archiveError) => {
-      if (!res.destroyed) res.destroy(archiveError);
-    });
-    req.on('aborted', () => archive.abort());
-
-    res.status(200);
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${bundle.filename}"`);
-    res.setHeader('Cache-Control', 'no-store');
-    archive.pipe(res);
-    for (const file of bundle.files) {
-      archive.append(file.content, {
-        name: `${bundle.root}/${file.path}`,
-        date: archiveDate,
-        mode: 0o644,
+    await runFindingExport(async () => {
+      const id = BigInt(req.params.id);
+      const scan = await prisma.scan.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          status: true,
+          repoFull: true,
+          repoKind: true,
+          workflowId: true,
+          postScriptId: true,
+          insertedAt: true,
+          updatedAt: true,
+        },
       });
-    }
-    try {
-      await archive.finalize();
-    } catch (archiveError) {
-      if (!res.destroyed) res.destroy(archiveError);
-    }
+      if (!scan) return res.status(404).json({ error: 'Scan not found.' });
+      if (!FINDING_EXPORT_STATUSES.includes(scan.status)) {
+        const availability = findingExportAvailability(scan, 0);
+        return res.status(409).json({ error: availability.message });
+      }
+
+      const sourceProfile = await findingExportSourceProfile(id);
+      const findingCount = Number(sourceProfile.findingCount);
+      const availability = findingExportAvailability(scan, findingCount);
+      if (!availability.ready) return res.status(409).json({ error: availability.message });
+      if (findingCount > MAX_FINDING_EXPORT_FINDINGS) {
+        throw new FindingExportTooManyFindingsError(MAX_FINDING_EXPORT_FINDINGS);
+      }
+      if (sourceProfile.enrichmentCount > BigInt(MAX_FINDING_EXPORT_RELATED_RECORDS)) {
+        throw new FindingExportTooManyRelatedRecordsError(
+          MAX_FINDING_EXPORT_RELATED_RECORDS,
+          'post-processing records'
+        );
+      }
+      if (sourceProfile.duplicateCount > BigInt(MAX_FINDING_EXPORT_RELATED_RECORDS)) {
+        throw new FindingExportTooManyRelatedRecordsError(MAX_FINDING_EXPORT_RELATED_RECORDS, 'duplicate records');
+      }
+      if (sourceProfile.totalBytes > BigInt(MAX_FINDING_EXPORT_SOURCE_BYTES)) {
+        throw new FindingExportSourceTooLargeError(MAX_FINDING_EXPORT_SOURCE_BYTES, 'finding data');
+      }
+      if (sourceProfile.largestRecordBytes > BigInt(MAX_FINDING_EXPORT_SOURCE_RECORD_BYTES)) {
+        throw new FindingExportSourceTooLargeError(MAX_FINDING_EXPORT_SOURCE_RECORD_BYTES, 'finding record');
+      }
+
+      const [workflow, postScript, findings] = await Promise.all([
+        prisma.workflow.findUnique({ where: { id: scan.workflowId }, select: { name: true } }),
+        prisma.postScript.findUnique({ where: { id: scan.postScriptId }, select: { name: true } }),
+        serializedScanVulnerabilities(id, {
+          maxFindings: MAX_FINDING_EXPORT_FINDINGS,
+          maxRelatedRecords: MAX_FINDING_EXPORT_RELATED_RECORDS,
+        }),
+      ]);
+      const exportScan = {
+        id: scan.id.toString(),
+        status: scan.status,
+        repoDisplay: repoDisplayName(scan.repoFull, scan.repoKind),
+        repoKind: scan.repoKind ?? 'remote',
+        workflowId: scan.workflowId.toString(),
+        workflowName: workflow?.name ?? null,
+        postScriptName: postScript?.name ?? null,
+        findings: findingCount,
+        insertedAt: scan.insertedAt,
+        updatedAt: scan.updatedAt,
+      };
+      const bundle = createFindingExport(exportScan, findings);
+      const archiveDate = new Date(exportScan.updatedAt || Date.now());
+      const archive = new ZipArchive({ zlib: { level: 6 } });
+      archive.on('warning', (warning) => {
+        if (warning.code !== 'ENOENT' && !res.destroyed) res.destroy(warning);
+      });
+      archive.on('error', (archiveError) => {
+        if (!res.destroyed) res.destroy(archiveError);
+      });
+      req.on('aborted', () => archive.abort());
+
+      res.status(200);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${bundle.filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      archive.pipe(res);
+      for (const file of bundle.files) {
+        // The generator defers creating each bounded string until archiver asks
+        // for that entry, rather than retaining the complete export in memory.
+        const content = Readable.from(
+          (function* findingExportFileContent() {
+            yield file.content();
+          })()
+        );
+        archive.append(content, {
+          name: `${bundle.root}/${file.path}`,
+          date: archiveDate,
+          mode: 0o644,
+        });
+      }
+      try {
+        await archive.finalize();
+      } catch (archiveError) {
+        if (!res.destroyed) res.destroy(archiveError);
+      }
+    });
   } catch (e) {
-    if (e instanceof FindingExportTooLargeError) return res.status(413).json({ error: e.message });
+    if (
+      e instanceof FindingExportTooLargeError ||
+      e instanceof FindingExportTooManyFindingsError ||
+      e instanceof FindingExportTooManyRelatedRecordsError ||
+      e instanceof FindingExportSourceTooLargeError
+    ) {
+      return res.status(413).json({ error: e.message });
+    }
+    if (e instanceof FindingExportBusyError) {
+      res.setHeader('Retry-After', String(e.retryAfterSeconds));
+      return res.status(429).json({ error: e.message });
+    }
     next(e);
   }
 });
