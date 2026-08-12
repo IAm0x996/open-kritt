@@ -94,7 +94,7 @@ def isolate_unit_tests_from_external_runners(monkeypatch):
     monkeypatch.setattr(worker_module, "resolve_scan_checkout_revisions", lambda scan, **_kwargs: scan)
 
 
-def step(step_id, depth, *, is_last=False, multi=False, output_format=None):
+def step(step_id, depth, *, is_last=False, multi=False, output_format=None, bound_source_step_id=None):
     return Step(
         id=step_id,
         content="Check {{repo_full}} {{thing}}",
@@ -105,6 +105,7 @@ def step(step_id, depth, *, is_last=False, multi=False, output_format=None):
         is_last_step=is_last,
         output_table="workflows.vulnerabilities" if is_last else "workflows.step_results",
         order=step_id,
+        bound_source_step_id=bound_source_step_id,
     )
 
 
@@ -2865,6 +2866,53 @@ def test_worker_does_not_retry_permanent_harness_failures(monkeypatch, tmp_path)
     assert not root.exists()
 
 
+def test_worker_uses_the_cyber_safety_retry_limit(monkeypatch, tmp_path):
+    monkeypatch.delenv("ENGINE_RUNTIME_CONFIG_PATH", raising=False)
+    root = tmp_path / "cyber-job"
+    root.mkdir()
+    (tmp_path / "engine-runtime.env").write_text("ENGINE_CYBER_SAFETY_RETRY_COUNT=3\n", encoding="utf-8")
+
+    class Workspace:
+        root_dir = str(root)
+        env = {"HOME": "/tmp/home"}
+
+    class CyberBlockedHarness:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, **_kwargs):
+            self.calls += 1
+            raise harnesses.HarnessError(
+                "provider response contained secret-value",
+                code="cyber_safety_blocked",
+                harness="codex",
+            )
+
+    prepared = SimpleNamespace(
+        workspace=Workspace(),
+        repo_dir="/tmp/repo",
+        checked_out_commit="abc",
+        layout="Dependency repositories are checked out as top-level directories inside the same workspace root.",
+        manifest_json='{"dependencies":[]}',
+    )
+    fake_db = FakeDb()
+    worker = Worker(SimpleNamespace(retry_count=0, data_dir=str(tmp_path), github_token=None), db=fake_db)
+    monkeypatch.setattr(worker_module, "prepare_dependency_workspace", lambda **_kwargs: prepared)
+    job = Job(
+        step=step(1, 0),
+        state=State(prev_id=0, prev_table=None, repeat_run=1, context={"repo_full": "owner/repo"}),
+    )
+    fake_harness = CyberBlockedHarness()
+
+    with pytest.raises(worker_module.StepExecutionError, match="failed after 4 attempts"):
+        worker.execute_job(scan=scan(), workflow_id=3, job=job, harness=fake_harness)
+
+    assert fake_harness.calls == 4
+    assert "Diagnostic: cyber_safety_blocked" in fake_db.metadata[0]["error"]
+    assert "secret-value" not in fake_db.metadata[0]["error"]
+    assert not root.exists()
+
+
 def test_worker_rotates_after_interrupting_a_rate_limited_step(monkeypatch, tmp_path):
     root = tmp_path / "job"
     root.mkdir()
@@ -3050,6 +3098,67 @@ def test_post_processing_does_not_retry_permanent_harness_failures(monkeypatch, 
 
     assert fake_harness.calls == 1
     assert "account quota is exhausted" in fake_db.updates[-1]["error"]
+    assert "secret-value" not in fake_db.updates[-1]["error"]
+    assert not root.exists()
+
+
+def test_post_processing_uses_the_cyber_safety_retry_limit(monkeypatch, tmp_path):
+    monkeypatch.delenv("ENGINE_RUNTIME_CONFIG_PATH", raising=False)
+    root = tmp_path / "cyber-post-job"
+    root.mkdir()
+    (tmp_path / "engine-runtime.env").write_text("ENGINE_CYBER_SAFETY_RETRY_COUNT=3\n", encoding="utf-8")
+
+    class Workspace:
+        root_dir = str(root)
+        env = {"HOME": "/tmp/home"}
+
+    class FakePostDb:
+        def __init__(self):
+            self.updates = []
+
+        @contextmanager
+        def connect(self):
+            yield FakeConn()
+
+        def update_post_process_metadata(self, _conn, metadata_id, **kwargs):
+            self.updates.append({"metadata_id": metadata_id, **kwargs})
+
+    class CyberBlockedHarness:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, **_kwargs):
+            self.calls += 1
+            raise harnesses.HarnessError(
+                "provider response contained secret-value",
+                code="cyber_safety_blocked",
+                harness="codex",
+            )
+
+    prepared = SimpleNamespace(
+        workspace=Workspace(),
+        repo_dir="/tmp/post-repo",
+        checked_out_commit="def",
+        layout="Dependency repositories are checked out as top-level directories inside the same workspace root.",
+        manifest_json='{"dependencies":[]}',
+    )
+    monkeypatch.setattr(post_processing_module, "prepare_dependency_workspace", lambda **_kwargs: prepared)
+    fake_db = FakePostDb()
+    processor = PostProcessor(SimpleNamespace(retry_count=0, data_dir=str(tmp_path), github_token=None), fake_db)
+    fake_harness = CyberBlockedHarness()
+
+    with pytest.raises(post_processing_module.PostProcessExecutionError, match="cyber_safety_blocked"):
+        processor._run_harness_with_retries(
+            metadata_id=9,
+            scan=scan(),
+            harness=fake_harness,
+            prompt="Rank findings.",
+            schema={},
+            validator=lambda _payload: None,
+        )
+
+    assert fake_harness.calls == 4
+    assert "Diagnostic: cyber_safety_blocked" in fake_db.updates[-1]["error"]
     assert "secret-value" not in fake_db.updates[-1]["error"]
     assert not root.exists()
 

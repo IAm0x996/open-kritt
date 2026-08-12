@@ -17,6 +17,7 @@ const payload = {
     scanRunnerMemoryReservationMb: { value: 1536, min: 0, max: 1048576 },
     workspaceSetupConcurrency: { value: 2, min: 1, max: 32 },
     retryCount: { value: 2, min: 0, max: 10 },
+    cyberSafetyRetryCount: { value: 0, min: 0, max: 10 },
     harnessTimeoutSeconds: { value: 7200, min: 60, max: 86400 },
   },
 };
@@ -37,6 +38,7 @@ describe('runtime settings form helpers', () => {
       scanRunnerMemoryReservationMb: '1536',
       workspaceSetupConcurrency: '2',
       retryCount: '2',
+      cyberSafetyRetryCount: '0',
       harnessTimeoutSeconds: '7200',
     });
   });
@@ -47,8 +49,9 @@ describe('runtime settings form helpers', () => {
         ...runtimeSettingsDraft(payload),
         workerCount: '04',
         retryCount: '0',
+        cyberSafetyRetryCount: '3',
       })
-    ).toEqual({ workerCount: 4, retryCount: 0 });
+    ).toEqual({ workerCount: 4, retryCount: 0, cyberSafetyRetryCount: 3 });
   });
 
   it('returns a changed provider-capacity autoscale toggle', () => {
@@ -86,12 +89,14 @@ describe('runtime settings form helpers', () => {
       minFreeStorageGb: 'not-a-number',
       workspaceSetupConcurrency: '1.5',
       retryCount: '11',
+      cyberSafetyRetryCount: '-1',
     };
     expect(runtimeSettingsIssues(payload, draft)).toEqual({
       workerCount: 'Enter a whole number.',
       minFreeStorageGb: 'Enter a number.',
       workspaceSetupConcurrency: 'Enter a whole number.',
       retryCount: 'Enter a value from 0 to 10.',
+      cyberSafetyRetryCount: 'Enter a value from 0 to 10.',
     });
     expect(runtimeSettingsPatch(payload, draft)).toEqual({});
   });

@@ -40,6 +40,7 @@ export function serializeStep(step) {
     depth: step.depth,
     multiOutput: step.multiOutput,
     consumesAll: step.consumesAll ?? false,
+    boundSourceStepId: step.boundSourceStepId?.toString() ?? null,
     isLast: step.isLastStep,
     content: step.content,
     outputFormat: safeParseFormat(step.outputFormat),
@@ -66,7 +67,8 @@ export function serializeWorkflow(workflow, steps, { scanCount = 0, lastUsed = n
     depths,
     depthChips: depths.map((d) => {
       const cnt = serializedSteps.filter((s) => s.depth === d).length;
-      return { depth: d, count: cnt, label: `d${d}${cnt > 1 ? ` ×${cnt}` : ''}` };
+      const bound = serializedSteps.some((step) => step.depth === d && step.boundSourceStepId !== null);
+      return { depth: d, count: cnt, bound, label: `d${d}${cnt > 1 ? ` ×${cnt}` : ''}` };
     }),
     steps: serializedSteps,
     scanCount,

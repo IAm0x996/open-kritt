@@ -102,6 +102,8 @@ class Step:
     order: int
     # A non-root depth may run once over the full previous-depth result array.
     consumes_all: bool = False
+    # When set, only outputs from this adjacent previous-depth step are accepted.
+    bound_source_step_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,8 @@ class State:
     # The immediate preceding step result. Batches aggregate this exact payload,
     # rather than every value accumulated in the rendered prompt context.
     output: dict[str, Any] | None = None
+    # The step that produced the immediate result represented by this state.
+    source_step_id: int | None = None
 
 
 @dataclass(frozen=True)

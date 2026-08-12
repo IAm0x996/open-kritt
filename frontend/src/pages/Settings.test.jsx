@@ -34,4 +34,34 @@ describe('runtime settings fields', () => {
     expect(html).toContain('id="setting-workerCount"');
     expect(html).not.toContain('id="setting-ignoreLowStorage"');
   });
+
+  it('explains the total attempt count when cyber-block retries are enabled', () => {
+    const html = renderToStaticMarkup(
+      <RuntimeSettingsFields
+        data={{
+          settings: {
+            cyberSafetyRetryCount: {
+              value: 3,
+              source: 'runtime_config',
+              valid: true,
+              envKey: 'ENGINE_CYBER_SAFETY_RETRY_COUNT',
+              type: 'integer',
+              min: 0,
+              max: 10,
+              recommendedMax: 3,
+              apply: 'live',
+            },
+          },
+        }}
+        draft={{ cyberSafetyRetryCount: '3' }}
+        issues={{}}
+        saving={false}
+        onChange={() => {}}
+      />
+    );
+
+    expect(html).toContain('id="setting-cyberSafetyRetryCount"');
+    expect(html).toContain('up to 4 total attempts');
+    expect(html).toContain('ENGINE_CYBER_SAFETY_RETRY_COUNT');
+  });
 });

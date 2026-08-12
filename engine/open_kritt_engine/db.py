@@ -720,6 +720,9 @@ class Database:
                     output_table=row["output_table"],
                     order=order,
                     consumes_all=bool(row.get("consume_all_previous", False)),
+                    bound_source_step_id=(
+                        _to_int(row["bound_source_step_id"]) if row.get("bound_source_step_id") is not None else None
+                    ),
                 )
             )
         return Workflow(id=_to_int(workflow["id"]), name=workflow["name"], steps=tuple(steps))

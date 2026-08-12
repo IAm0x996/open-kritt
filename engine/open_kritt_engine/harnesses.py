@@ -118,6 +118,20 @@ class HarnessError(RuntimeError):
         self.attempts: int | None = None
 
 
+def harness_failure_retry_count(
+    error: HarnessError,
+    retry_count: int,
+    cyber_safety_retry_count: int,
+) -> int:
+    """Return the configured inline retry allowance for one harness failure."""
+
+    if error.code == "cyber_safety_blocked":
+        return max(0, int(cyber_safety_retry_count))
+    if not error.retryable:
+        return 0
+    return max(0, int(retry_count))
+
+
 @dataclass(frozen=True)
 class HarnessResult:
     payload: dict[str, Any]

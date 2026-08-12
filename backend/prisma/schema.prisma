@@ -26,12 +26,15 @@ model Step {
   multiOutput  Boolean  @map("multi_output")
   // When true, depth runs one agent over the whole previous-depth output array.
   consumesAll  Boolean  @default(false) @map("consume_all_previous")
+  // Optional one-to-one route from an adjacent previous-depth sibling.
+  boundSourceStepId BigInt? @map("bound_source_step_id")
   isLastStep   Boolean  @map("is_last_step")
   outputTable  String   @default("workflows.step_results") @map("output_table")
   insertedAt   DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@map("steps")
+  @@index([boundSourceStepId], map: "steps_bound_source_step_id_idx")
   @@schema("public")
 }
 

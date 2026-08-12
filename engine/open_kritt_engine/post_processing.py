@@ -10,6 +10,7 @@ from .harnesses import (
     CAPACITY_RATE_LIMIT_FAILURES,
     RETRYABLE_RATE_LIMIT_FAILURES,
     HarnessError,
+    harness_failure_retry_count,
     normalize_harness_name,
 )
 from .model_output_artifacts import record_model_error_output
@@ -484,6 +485,15 @@ class PostProcessor:
             maximum=10,
         )
 
+    def _cyber_safety_retry_count(self) -> int:
+        return runtime_int(
+            "ENGINE_CYBER_SAFETY_RETRY_COUNT",
+            0,
+            data_dir=getattr(self.config, "data_dir", None),
+            minimum=0,
+            maximum=10,
+        )
+
     def _prepare_workspace(
         self, metadata_id: int, scan: dict[str, Any], agent_skills: list[dict[str, Any]] | None = None
     ):
@@ -564,10 +574,13 @@ class PostProcessor:
                 )
                 conn.commit()
 
+            retry_count = self._retry_count()
+            cyber_safety_retry_count = self._cyber_safety_retry_count()
             last_error = None
             last_exception: Exception | None = None
             attempt_errors: list[str] = []
-            for attempt in range(1, self._retry_count() + 2):
+            failure_counts = {"regular": 0, "cyber_safety_blocked": 0}
+            for attempt in range(1, retry_count + cyber_safety_retry_count + 2):
                 started = now_utc()
                 usage = None
                 codex_session_id = None
@@ -651,14 +664,25 @@ class PostProcessor:
                             codex_account_email=getattr(prepared.workspace, "provider_account_email", None),
                         )
                         conn.commit()
-                    if isinstance(exc, HarnessError) and (
-                        exc.code in RETRYABLE_RATE_LIMIT_FAILURES or not exc.retryable
-                    ):
-                        if exc.code in RETRYABLE_RATE_LIMIT_FAILURES and exc.code not in CAPACITY_RATE_LIMIT_FAILURES:
+                    if isinstance(exc, HarnessError) and exc.code in RETRYABLE_RATE_LIMIT_FAILURES:
+                        if exc.code not in CAPACITY_RATE_LIMIT_FAILURES:
                             mark_provider_account_rate_limited(
                                 getattr(prepared.workspace, "provider_account_provider", None),
                                 getattr(prepared.workspace, "provider_account_home", None),
                             )
+                        break
+                    allowed_retries = (
+                        harness_failure_retry_count(exc, retry_count, cyber_safety_retry_count)
+                        if isinstance(exc, HarnessError)
+                        else retry_count
+                    )
+                    failure_kind = (
+                        "cyber_safety_blocked"
+                        if isinstance(exc, HarnessError) and exc.code == "cyber_safety_blocked"
+                        else "regular"
+                    )
+                    failure_counts[failure_kind] += 1
+                    if failure_counts[failure_kind] > allowed_retries:
                         break
             if isinstance(last_exception, HarnessError) and last_exception.code in RETRYABLE_RATE_LIMIT_FAILURES:
                 raise PostProcessRateLimited(

@@ -46,6 +46,7 @@ test('settings API exposes the whitelisted runtime settings', async () => {
       'scanRunnerMemoryReservationMb',
       'workspaceSetupConcurrency',
       'retryCount',
+      'cyberSafetyRetryCount',
       'harnessTimeoutSeconds',
     ]);
     assert.equal(body.capabilities.dedicatedScanConcurrency.available, true);
@@ -74,6 +75,8 @@ test('runtime settings expose only whitelisted effective values and their source
   assert.equal(result.settings.workerCount.source, 'runtime_config');
   assert.equal(result.settings.retryCount.value, 3);
   assert.equal(result.settings.retryCount.source, 'project_environment');
+  assert.equal(result.settings.cyberSafetyRetryCount.value, 0);
+  assert.equal(result.settings.cyberSafetyRetryCount.source, 'default');
   assert.equal(result.settings.harnessTimeoutSeconds.value, 3600);
   assert.equal(result.settings.harnessTimeoutSeconds.source, 'process_environment');
   assert.equal(result.settings.workspaceSetupConcurrency.value, 2);
@@ -108,6 +111,7 @@ test('runtime setting updates apply live and persist without overwriting unrelat
       workerCount: 5,
       workersPerAccount: 12,
       retryCount: 4,
+      cyberSafetyRetryCount: 3,
       autoscaleScanWorkersOnProviderCapacity: false,
       codexMaxSubagentsPerSession: 5,
       minFreeStorageGb: 18.5,
@@ -129,6 +133,7 @@ test('runtime setting updates apply live and persist without overwriting unrelat
   assert.equal(runtimeValues.ENGINE_WORKER_COUNT, '5');
   assert.equal(runtimeValues.ENGINE_WORKERS_PER_ACCOUNT, '12');
   assert.equal(runtimeValues.ENGINE_RETRY_COUNT, '4');
+  assert.equal(runtimeValues.ENGINE_CYBER_SAFETY_RETRY_COUNT, '3');
   assert.equal(runtimeValues.ENGINE_AUTOSCALE_SCAN_WORKERS_ON_PROVIDER_CAPACITY, 'false');
   assert.equal(runtimeValues.ENGINE_CODEX_MAX_SUBAGENTS_PER_SESSION, '5');
   assert.equal(runtimeValues.ENGINE_MIN_FREE_STORAGE_GB, '18.5');
@@ -140,6 +145,7 @@ test('runtime setting updates apply live and persist without overwriting unrelat
   assert.equal(projectValues.ENGINE_WORKER_COUNT, '5');
   assert.equal(projectValues.ENGINE_WORKERS_PER_ACCOUNT, '12');
   assert.equal(projectValues.ENGINE_RETRY_COUNT, '4');
+  assert.equal(projectValues.ENGINE_CYBER_SAFETY_RETRY_COUNT, '3');
   assert.equal(projectValues.ENGINE_AUTOSCALE_SCAN_WORKERS_ON_PROVIDER_CAPACITY, 'false');
   assert.equal(projectValues.ENGINE_CODEX_MAX_SUBAGENTS_PER_SESSION, '5');
   assert.equal(projectValues.ENGINE_MIN_FREE_STORAGE_GB, '18.5');
@@ -154,6 +160,7 @@ test('runtime setting updates apply live and persist without overwriting unrelat
   assert.equal(result.settings.workersPerAccount.value, 12);
   assert.equal(result.settings.workerCount.source, 'runtime_config');
   assert.equal(result.settings.retryCount.value, 4);
+  assert.equal(result.settings.cyberSafetyRetryCount.value, 3);
   assert.equal(result.settings.autoscaleScanWorkersOnProviderCapacity.value, false);
   assert.equal(result.settings.codexMaxSubagentsPerSession.value, 5);
   assert.equal(result.settings.minFreeStorageGb.value, 18.5);
@@ -169,13 +176,14 @@ test('runtime setting validation rejects unknown, fractional, and out-of-range v
       validateRuntimeSettingsPatch({
         workerCount: 1.5,
         retryCount: 11,
+        cyberSafetyRetryCount: 11,
         secret: 'value',
       }),
     (error) => {
       assert.ok(error instanceof ValidationError);
       assert.deepEqual(
         error.errors.map((item) => item.field),
-        ['workerCount', 'retryCount', 'secret']
+        ['workerCount', 'retryCount', 'cyberSafetyRetryCount', 'secret']
       );
       return true;
     }
@@ -184,10 +192,12 @@ test('runtime setting validation rejects unknown, fractional, and out-of-range v
   assert.deepEqual(
     validateRuntimeSettingsPatch({
       workerCount: '0',
+      cyberSafetyRetryCount: 3,
       harnessTimeoutSeconds: 60,
     }),
     {
       workerCount: 0,
+      cyberSafetyRetryCount: 3,
       harnessTimeoutSeconds: 60,
     }
   );
@@ -242,7 +252,10 @@ test('runtime setting validation rejects unknown, fractional, and out-of-range v
 
 test('invalid persisted values fall back safely and are flagged', async (t) => {
   const paths = await settingsFiles(t);
-  await writeFile(paths.runtimeConfigPath, 'ENGINE_WORKER_COUNT=too-many\nENGINE_RETRY_COUNT=99\n');
+  await writeFile(
+    paths.runtimeConfigPath,
+    'ENGINE_WORKER_COUNT=too-many\nENGINE_RETRY_COUNT=99\nENGINE_CYBER_SAFETY_RETRY_COUNT=-1\n'
+  );
 
   const result = await readRuntimeSettings({ ...paths, env: {} });
 
@@ -250,6 +263,8 @@ test('invalid persisted values fall back safely and are flagged', async (t) => {
   assert.equal(result.settings.workerCount.valid, false);
   assert.equal(result.settings.retryCount.value, 2);
   assert.equal(result.settings.retryCount.valid, false);
+  assert.equal(result.settings.cyberSafetyRetryCount.value, 0);
+  assert.equal(result.settings.cyberSafetyRetryCount.valid, false);
 });
 
 test('failed project persistence rolls back newly added live settings', async (t) => {

@@ -478,6 +478,58 @@ def test_generation_runner_does_not_retry_permanent_harness_failures(monkeypatch
     assert exc_info.value.attempts == 1
 
 
+def test_generation_runner_uses_the_cyber_safety_retry_limit(monkeypatch, tmp_path):
+    monkeypatch.delenv("ENGINE_RUNTIME_CONFIG_PATH", raising=False)
+    (tmp_path / "engine-runtime.env").write_text("ENGINE_CYBER_SAFETY_RETRY_COUNT=3\n", encoding="utf-8")
+
+    class CyberBlockedHarness:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, **_kwargs):
+            self.calls += 1
+            raise harnesses.HarnessError(
+                "codex failed (cyber_safety_blocked).",
+                code="cyber_safety_blocked",
+                exit_code=1,
+                harness="codex",
+            )
+
+    fake_harness = CyberBlockedHarness()
+    monkeypatch.setattr(generation_module, "harness_for", lambda *_args, **_kwargs: fake_harness)
+
+    with pytest.raises(harnesses.HarnessError) as exc_info:
+        GenerationRunner(SimpleNamespace(data_dir=str(tmp_path), retry_count=0)).generate(generation_job())
+
+    assert fake_harness.calls == 4
+    assert exc_info.value.retryable is False
+    assert exc_info.value.attempts == 4
+
+
+def test_generation_runner_keeps_regular_and_cyber_retry_budgets_independent(monkeypatch, tmp_path):
+    monkeypatch.delenv("ENGINE_RUNTIME_CONFIG_PATH", raising=False)
+    (tmp_path / "engine-runtime.env").write_text("ENGINE_CYBER_SAFETY_RETRY_COUNT=3\n", encoding="utf-8")
+
+    class MixedFailureHarness:
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, **_kwargs):
+            self.calls += 1
+            code = "model_process_error" if self.calls == 1 else "cyber_safety_blocked"
+            raise harnesses.HarnessError(f"codex failed ({code}).", code=code, harness="codex")
+
+    fake_harness = MixedFailureHarness()
+    monkeypatch.setattr(generation_module, "harness_for", lambda *_args, **_kwargs: fake_harness)
+
+    with pytest.raises(harnesses.HarnessError) as exc_info:
+        GenerationRunner(SimpleNamespace(data_dir=str(tmp_path), retry_count=1)).generate(generation_job())
+
+    assert fake_harness.calls == 5
+    assert exc_info.value.code == "cyber_safety_blocked"
+    assert exc_info.value.attempts == 5
+
+
 def test_tool_free_codex_command_disables_search_and_execution_features():
     tool_free = codex_exec_command(
         repo_dir="/tmp/generation",
@@ -609,7 +661,7 @@ def test_tool_free_claude_command_has_no_default_tools(monkeypatch):
     assert "--effort" not in command
 
 
-def engine_step(step_id, depth, *, consumes_all=False, is_last=False):
+def engine_step(step_id, depth, *, consumes_all=False, is_last=False, bound_source_step_id=None):
     return Step(
         id=step_id,
         content="Check {{repo_full}}",
@@ -621,6 +673,7 @@ def engine_step(step_id, depth, *, consumes_all=False, is_last=False):
         output_table="workflows.vulnerabilities" if is_last else "workflows.step_results",
         order=step_id,
         consumes_all=consumes_all,
+        bound_source_step_id=bound_source_step_id,
     )
 
 
@@ -632,6 +685,57 @@ def queue_scan():
         "dependencies": [],
         "configuration": {},
     }
+
+
+def test_database_loads_the_persisted_bound_source_step_id():
+    class Cursor:
+        def __init__(self, *, row=None, rows=None):
+            self.row = row
+            self.rows = rows
+
+        def fetchone(self):
+            return self.row
+
+        def fetchall(self):
+            return self.rows
+
+    class Connection:
+        def execute(self, query, _params):
+            if "llm_workflows" in query:
+                return Cursor(row={"id": 7, "name": "bound", "step_ids": [10, 20]})
+            return Cursor(
+                rows=[
+                    {
+                        "id": 10,
+                        "content": "Source",
+                        "output_format": '{"candidate":"string"}',
+                        "name": "Source",
+                        "depth": 0,
+                        "multi_output": True,
+                        "is_last_step": False,
+                        "output_table": "workflows.step_results",
+                        "consume_all_previous": False,
+                        "bound_source_step_id": None,
+                    },
+                    {
+                        "id": 20,
+                        "content": "Destination",
+                        "output_format": '{"finding":"string"}',
+                        "name": "Destination",
+                        "depth": 1,
+                        "multi_output": True,
+                        "is_last_step": True,
+                        "output_table": "workflows.vulnerabilities",
+                        "consume_all_previous": False,
+                        "bound_source_step_id": 10,
+                    },
+                ]
+            )
+
+    workflow = Database("").load_workflow(Connection(), 7)
+
+    assert workflow.steps[0].bound_source_step_id is None
+    assert workflow.steps[1].bound_source_step_id == 10
 
 
 def test_non_batch_depth_pipelines_a_ready_branch_while_its_sibling_is_running():
@@ -657,6 +761,93 @@ def test_non_batch_depth_pipelines_a_ready_branch_while_its_sibling_is_running()
     assert [job.step.id for job in pending] == [3, 2]
     assert pending[0].state.prev_id == 11
     assert pending[0].state.context["item"] == "ready"
+
+
+def test_bound_depth_routes_each_source_result_only_to_its_selected_destination():
+    workflow = Workflow(
+        id=1,
+        name="bound",
+        steps=(
+            engine_step(1, 0),
+            engine_step(2, 0),
+            engine_step(3, 1, is_last=True, bound_source_step_id=1),
+            engine_step(4, 1, is_last=True, bound_source_step_id=2),
+        ),
+    )
+    source_one = (1, 0, None, 1)
+    source_two = (2, 0, None, 1)
+    results = {
+        source_one: [
+            StepResultRow(id=11, step_id=1, prev_id=0, prev_table=None, repeat_run=1, json_answer={"item": "a"})
+        ],
+        source_two: [
+            StepResultRow(id=22, step_id=2, prev_id=0, prev_table=None, repeat_run=1, json_answer={"item": "b"})
+        ],
+    }
+
+    partially_ready = build_pending_jobs(
+        scan=queue_scan(),
+        workflow=workflow,
+        completed={source_one},
+        step_results=results,
+    )
+    assert [(job.step.id, job.state.prev_id) for job in partially_ready] == [(3, 11), (2, 0)]
+
+    fully_ready = build_pending_jobs(
+        scan=queue_scan(),
+        workflow=workflow,
+        completed={source_one, source_two},
+        step_results=results,
+    )
+    assert {(job.step.id, job.state.prev_id) for job in fully_ready} == {(3, 11), (4, 22)}
+
+
+def test_depth_after_a_bound_transition_returns_to_broadcast_routing():
+    workflow = Workflow(
+        id=1,
+        name="bound-then-broadcast",
+        steps=(
+            engine_step(1, 0),
+            engine_step(2, 0),
+            engine_step(3, 1, bound_source_step_id=1),
+            engine_step(4, 1, bound_source_step_id=2),
+            engine_step(5, 2, is_last=True),
+            engine_step(6, 2, is_last=True),
+        ),
+    )
+    completed = {
+        (1, 0, None, 1),
+        (2, 0, None, 1),
+        (3, 11, "workflows.step_results", 1),
+        (4, 22, "workflows.step_results", 1),
+    }
+    results = {
+        (1, 0, None, 1): [StepResultRow(11, 1, 0, None, 1, {"item": "a"})],
+        (2, 0, None, 1): [StepResultRow(22, 2, 0, None, 1, {"item": "b"})],
+        (3, 11, "workflows.step_results", 1): [StepResultRow(33, 3, 11, "workflows.step_results", 1, {"item": "c"})],
+        (4, 22, "workflows.step_results", 1): [StepResultRow(44, 4, 22, "workflows.step_results", 1, {"item": "d"})],
+    }
+
+    pending = build_pending_jobs(scan=queue_scan(), workflow=workflow, completed=completed, step_results=results)
+
+    assert {(job.step.id, job.state.prev_id) for job in pending} == {(5, 33), (5, 44), (6, 33), (6, 44)}
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        (engine_step(1, 0, bound_source_step_id=99),),
+        (engine_step(1, 0), engine_step(2, 1, bound_source_step_id=1)),
+        (engine_step(1, 0), engine_step(2, 1, bound_source_step_id=1), engine_step(3, 1)),
+        (engine_step(1, 0), engine_step(2, 1, consumes_all=True, bound_source_step_id=1)),
+        (engine_step(1, 0), engine_step(2, 0), engine_step(3, 1, bound_source_step_id=1)),
+    ],
+)
+def test_engine_rejects_invalid_persisted_binding_topologies(steps):
+    workflow = Workflow(id=1, name="invalid-binding", steps=steps)
+
+    with pytest.raises(ValueError, match="bind|bound"):
+        build_pending_jobs(scan=queue_scan(), workflow=workflow, completed=set(), step_results={})
 
 
 def test_batch_depth_waits_for_all_previous_branches_and_receives_full_array():

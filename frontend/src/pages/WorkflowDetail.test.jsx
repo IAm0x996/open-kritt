@@ -30,4 +30,24 @@ describe('WorkflowDetail terminal step summary', () => {
     // while REQUIRED_VULN_KEYS actually has 8 entries.
     expect(html).not.toContain('emits all 9 required vulnerability keys');
   });
+
+  it('identifies the selected source for a bound destination step', () => {
+    const source = { ...terminalStep, id: '10', name: 'Map networking' };
+    const destination = {
+      ...terminalStep,
+      id: '20',
+      depth: 1,
+      name: 'Review networking',
+      boundSourceStepId: '10',
+    };
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <StepPanel step={destination} steps={[source, destination]} editTo="/workflows/1/steps/20" onClose={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('Bound input - this step receives results only from');
+    expect(html).toContain('Map networking');
+    expect(html).toContain('bound_source_step_id:');
+  });
 });

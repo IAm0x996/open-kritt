@@ -71,6 +71,61 @@ test('workflow edit conflicts identify the safe duplicate path', () => {
   });
 });
 
+test('workflow replacement resolves portable binding IDs to newly created database step IDs', async () => {
+  const created = [];
+  const tx = {
+    $queryRaw: async () => [],
+    workflow: {
+      findUnique: async () => ({ id: 7n, stepIds: [1n] }),
+      update: async ({ data }) => ({ id: 7n, ...data }),
+    },
+    scan: { count: async () => 0 },
+    step: {
+      create: async ({ data }) => {
+        const row = { id: BigInt(100 + created.length), ...data };
+        created.push(row);
+        return row;
+      },
+      deleteMany: async () => ({ count: 1 }),
+    },
+  };
+  const result = await replaceWorkflowIfUnused(tx, 7n, {
+    name: 'Bound',
+    description: '',
+    maxDepth: 1,
+    extraKeys: [],
+    levels: [
+      {
+        depth: 0,
+        multiOutput: true,
+        consumesAll: false,
+        outputFormat: { candidate: 'string' },
+        steps: [
+          { clientId: 'source-a', name: 'A', content: 'A', boundSourceStepId: null },
+          { clientId: 'source-b', name: 'B', content: 'B', boundSourceStepId: null },
+        ],
+      },
+      {
+        depth: 1,
+        multiOutput: true,
+        consumesAll: false,
+        outputFormat: { finding: 'string' },
+        steps: [
+          { clientId: 'destination-a', name: 'C', content: 'C', boundSourceStepId: 'source-a' },
+          { clientId: 'destination-b', name: 'D', content: 'D', boundSourceStepId: 'source-b' },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(result.kind, 'updated');
+  assert.deepEqual(
+    created.map((step) => step.boundSourceStepId),
+    [null, null, 100n, 101n]
+  );
+  assert.deepEqual(result.workflow.stepIds, [100n, 101n, 102n, 103n]);
+});
+
 test('referenced workflows cannot be deleted after taking the workflow row lock', async () => {
   const calls = [];
   const tx = {

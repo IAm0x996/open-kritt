@@ -346,6 +346,108 @@ test('validateWorkflow clears individual ancestor keys at a consumesAll boundary
   assert.doesNotThrow(() => validateWorkflow(workflow));
 });
 
+function boundWorkflow() {
+  return {
+    name: 'bound-workflow',
+    levels: [
+      {
+        depth: 0,
+        multiOutput: true,
+        outputFormat: { candidate: 'string' },
+        steps: [
+          { clientId: 'source-a', name: 'Source A', content: 'Find candidates in {{repo_full}}.' },
+          { clientId: 'source-b', name: 'Source B', content: 'Find other candidates in {{repo_full}}.' },
+        ],
+      },
+      {
+        depth: 1,
+        multiOutput: true,
+        bindPrevious: true,
+        outputFormat: terminalOutput,
+        steps: [
+          { clientId: 'destination-a', boundSourceStepId: 'source-a', name: 'A', content: 'Check {{candidate}}.' },
+          { clientId: 'destination-b', boundSourceStepId: 'source-b', name: 'B', content: 'Check {{candidate}}.' },
+        ],
+      },
+    ],
+  };
+}
+
+test('validateWorkflow accepts an explicit one-to-one binding between adjacent depths', () => {
+  const valid = validateWorkflow(boundWorkflow());
+
+  assert.equal(valid.levels[1].bindPrevious, true);
+  assert.equal(valid.levels[1].consumesAll, false);
+  assert.deepEqual(
+    valid.levels[1].steps.map((step) => [step.clientId, step.boundSourceStepId]),
+    [
+      ['destination-a', 'source-a'],
+      ['destination-b', 'source-b'],
+    ]
+  );
+});
+
+test('validateWorkflow rejects incomplete, duplicate, and non-adjacent bindings', () => {
+  for (const mutate of [
+    (workflow) => {
+      workflow.levels[1].steps.pop();
+    },
+    (workflow) => {
+      workflow.levels[1].steps[1].boundSourceStepId = 'source-a';
+    },
+    (workflow) => {
+      workflow.levels[1].steps[1].boundSourceStepId = 'destination-a';
+    },
+    (workflow) => {
+      workflow.levels[1].steps[1].boundSourceStepId = null;
+    },
+  ]) {
+    const workflow = boundWorkflow();
+    mutate(workflow);
+    assert.throws(
+      () => validateWorkflow(workflow),
+      (error) =>
+        error instanceof ValidationError &&
+        error.errors.some((item) => `${item.field} ${item.message}`.toLowerCase().includes('bind'))
+    );
+  }
+});
+
+test('validateWorkflow rejects binding at the root, with batching, or while binding is disabled', () => {
+  const rootBound = boundWorkflow();
+  rootBound.levels[0].bindPrevious = true;
+  assert.throws(
+    () => validateWorkflow(rootBound),
+    (error) => error instanceof ValidationError && error.errors.some((item) => item.message.includes('Depth 0'))
+  );
+
+  const batched = boundWorkflow();
+  batched.levels[1].consumesAll = true;
+  assert.throws(
+    () => validateWorkflow(batched),
+    (error) => error instanceof ValidationError && error.errors.some((item) => item.message.includes('batch'))
+  );
+
+  const disabled = boundWorkflow();
+  disabled.levels[1].bindPrevious = false;
+  assert.throws(
+    () => validateWorkflow(disabled),
+    (error) => error instanceof ValidationError && error.errors.some((item) => item.message.includes('Enable bind'))
+  );
+});
+
+test('validateWorkflow requires at least two steps in both bound depths', () => {
+  const workflow = boundWorkflow();
+  workflow.levels[0].steps = workflow.levels[0].steps.slice(0, 1);
+  workflow.levels[1].steps = workflow.levels[1].steps.slice(0, 1);
+
+  assert.throws(
+    () => validateWorkflow(workflow),
+    (error) =>
+      error instanceof ValidationError && error.errors.some((item) => item.message.includes('at least two steps'))
+  );
+});
+
 test('validatePostScript accepts scan, finding, and dynamic extra values', () => {
   const content = '{{repo_full}} {{summary}} {{explanation}} {{extra}} {{extra.impact}}';
   const valid = validatePostScript({

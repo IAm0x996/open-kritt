@@ -203,7 +203,7 @@ export function summarizeExpectedWorkflowLineages(scan, steps, metadata, results
   const depths = [...new Set(steps.map((step) => step.depth))].sort((a, b) => a - b);
   const byDepth = new Map(depths.map((depth) => [depth, steps.filter((step) => step.depth === depth)]));
   const runs = Array.from({ length: repeatRuns(scan) }, (_, index) => index + 1);
-  let states = [{ prevId: 0, prevTable: null }];
+  let states = [{ prevId: 0, prevTable: null, sourceStepId: null }];
   let previousDepthComplete = true;
   const expected = new Set();
 
@@ -214,11 +214,14 @@ export function summarizeExpectedWorkflowLineages(scan, steps, metadata, results
     let depthComplete = previousDepthComplete;
     let inputStates = states;
     if (consumesAll) {
-      inputStates = previousDepthComplete && states.length ? [{ prevId: 0, prevTable: null }] : [];
+      inputStates = previousDepthComplete && states.length ? [{ prevId: 0, prevTable: null, sourceStepId: null }] : [];
     }
 
-    for (const state of inputStates) {
-      for (const step of depthSteps) {
+    for (const step of depthSteps) {
+      const routedStates = step.boundSourceStepId
+        ? inputStates.filter((state) => `${state.sourceStepId ?? ''}` === `${step.boundSourceStepId}`)
+        : inputStates;
+      for (const state of routedStates) {
         let taskComplete = true;
         const taskResults = [];
         for (const repeatRun of runs) {
@@ -236,6 +239,7 @@ export function summarizeExpectedWorkflowLineages(scan, steps, metadata, results
           nextStates.push({
             prevId: row.id,
             prevTable: 'workflows.step_results',
+            sourceStepId: step.id,
           });
         }
       }

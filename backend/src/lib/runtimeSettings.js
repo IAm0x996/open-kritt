@@ -109,6 +109,14 @@ export const RUNTIME_SETTING_DEFINITIONS = Object.freeze({
     recommendedMax: 2,
     apply: 'live',
   }),
+  cyberSafetyRetryCount: Object.freeze({
+    envKey: 'ENGINE_CYBER_SAFETY_RETRY_COUNT',
+    defaultValue: 0,
+    min: 0,
+    max: 10,
+    recommendedMax: 3,
+    apply: 'live',
+  }),
   harnessTimeoutSeconds: Object.freeze({
     envKey: 'ENGINE_HARNESS_TIMEOUT_SECONDS',
     defaultValue: 7200,

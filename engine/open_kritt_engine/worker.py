@@ -28,6 +28,7 @@ from .harnesses import (
     RETRYABLE_RATE_LIMIT_FAILURES,
     HarnessError,
     cleanup_stale_scan_sandboxes,
+    harness_failure_retry_count,
     harness_for,
     normalize_harness_name,
     scan_model_provider,
@@ -376,6 +377,15 @@ class Worker:
         return runtime_int(
             "ENGINE_RETRY_COUNT",
             2,
+            data_dir=getattr(self.config, "data_dir", None),
+            minimum=0,
+            maximum=10,
+        )
+
+    def runtime_cyber_safety_retry_count(self) -> int:
+        return runtime_int(
+            "ENGINE_CYBER_SAFETY_RETRY_COUNT",
+            0,
             data_dir=getattr(self.config, "data_dir", None),
             minimum=0,
             maximum=10,
@@ -1390,10 +1400,13 @@ class Worker:
                         conn.commit()
                     raise StepExecutionError(f"workspace setup failed for step {step.id}: {exc}") from exc
 
-            max_attempts = self.runtime_retry_count() + 1
+            retry_count = self.runtime_retry_count()
+            cyber_safety_retry_count = self.runtime_cyber_safety_retry_count()
+            max_attempts = retry_count + cyber_safety_retry_count + 1
             last_error = None
             last_exception: Exception | None = None
             attempt_errors: list[str] = []
+            failure_counts = {"regular": 0, "cyber_safety_blocked": 0}
             last_attempt = 1
             for attempt in range(1, max_attempts + 1):
                 last_attempt = attempt
@@ -1573,14 +1586,25 @@ class Worker:
                                 )
                                 conn.commit()
                     LOGGER.warning("step %s failed attempt %s: %s", step.id, attempt, last_error)
-                    if isinstance(exc, HarnessError) and not exc.retryable:
-                        break
                     if isinstance(exc, HarnessError) and exc.code in RETRYABLE_RATE_LIMIT_FAILURES:
                         if exc.code not in CAPACITY_RATE_LIMIT_FAILURES:
                             mark_provider_account_rate_limited(
                                 getattr(prepared.workspace, "provider_account_provider", None),
                                 getattr(prepared.workspace, "provider_account_home", None),
                             )
+                        break
+                    allowed_retries = (
+                        harness_failure_retry_count(exc, retry_count, cyber_safety_retry_count)
+                        if isinstance(exc, HarnessError)
+                        else retry_count
+                    )
+                    failure_kind = (
+                        "cyber_safety_blocked"
+                        if isinstance(exc, HarnessError) and exc.code == "cyber_safety_blocked"
+                        else "regular"
+                    )
+                    failure_counts[failure_kind] += 1
+                    if failure_counts[failure_kind] > allowed_retries:
                         break
 
             run_time_ms = int((now_utc() - started).total_seconds() * 1000)

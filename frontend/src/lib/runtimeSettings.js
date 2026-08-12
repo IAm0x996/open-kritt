@@ -12,6 +12,7 @@ export const RUNTIME_SETTING_KEYS = [
   'scanRunnerMemoryReservationMb',
   'workspaceSetupConcurrency',
   'retryCount',
+  'cyberSafetyRetryCount',
   'harnessTimeoutSeconds',
 ];
 

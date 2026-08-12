@@ -13,7 +13,7 @@ import {
   orderScanErrorsForDisplay,
   summarizeExpectedWorkflowLineages,
 } from '../src/lib/repo.js';
-import { serializeScan } from '../src/lib/serialize.js';
+import { serializeScan, serializeStep } from '../src/lib/serialize.js';
 import { SCAN_STATUSES } from '../src/lib/constants.js';
 
 test('active workers expose workflow depth only for workflow steps', () => {
@@ -21,6 +21,23 @@ test('active workers expose workflow depth only for workflow steps', () => {
   assert.equal(activeJobWorkflowDepth({}, { depth: 0 }), 0);
   assert.equal(activeJobWorkflowDepth({ kind: 'post_script' }, { depth: 3 }), null);
   assert.equal(activeJobWorkflowDepth({ kind: 'step' }, null), null);
+});
+
+test('step serialization exposes bound routing IDs as JSON-safe strings', () => {
+  const serialized = serializeStep({
+    id: 20n,
+    name: 'Destination',
+    depth: 1,
+    multiOutput: true,
+    consumesAll: false,
+    boundSourceStepId: 10n,
+    isLastStep: true,
+    content: 'Review.',
+    outputFormat: '{"finding":"string"}',
+    outputTable: 'workflows.vulnerabilities',
+  });
+
+  assert.equal(serialized.boundSourceStepId, '10');
 });
 
 test('active worker duration begins at the harness phase instead of the earlier metadata claim', () => {
@@ -162,6 +179,37 @@ test('lineage summary repeats each concrete task before exposing accumulated out
   assert.deepEqual(summarizeExpectedWorkflowLineages(scan, steps, rootComplete, results), {
     expectedLineages: 6,
     completedLineages: 2,
+  });
+});
+
+test('lineage summary counts only the one-to-one tasks selected by bound routing', () => {
+  const scan = { configuration: {} };
+  const steps = [
+    { id: 10n, depth: 0, consumesAll: false, boundSourceStepId: null, isLastStep: false },
+    { id: 11n, depth: 0, consumesAll: false, boundSourceStepId: null, isLastStep: false },
+    { id: 20n, depth: 1, consumesAll: false, boundSourceStepId: 10n, isLastStep: true },
+    { id: 21n, depth: 1, consumesAll: false, boundSourceStepId: 11n, isLastStep: true },
+  ];
+  const results = [
+    { id: 1n, stepId: 10n, prevId: null, prevTable: null, repeatRun: 1 },
+    { id: 2n, stepId: 11n, prevId: null, prevTable: null, repeatRun: 1 },
+  ];
+  const metadata = [
+    { kind: 'step', status: 'completed', stepId: 10n, prevId: null, prevTable: null, repeatRun: 1 },
+    { kind: 'step', status: 'completed', stepId: 11n, prevId: null, prevTable: null, repeatRun: 1 },
+    {
+      kind: 'step',
+      status: 'completed',
+      stepId: 20n,
+      prevId: 1n,
+      prevTable: 'workflows.step_results',
+      repeatRun: 1,
+    },
+  ];
+
+  assert.deepEqual(summarizeExpectedWorkflowLineages(scan, steps, metadata, results), {
+    expectedLineages: 4,
+    completedLineages: 3,
   });
 });
 

@@ -275,12 +275,52 @@ export function validateWorkflow(body) {
     } catch {
       push(`levels[${i}].outputFormat`, 'Output format is not valid JSON.');
     }
+    const rawSteps = Array.isArray(lvl?.steps) ? lvl.steps : [];
+    const steps = rawSteps.map((step, stepIndex) => {
+      const rawClientId = step?.clientId ?? step?.client_id ?? step?.id;
+      const hasClientId = rawClientId !== undefined && rawClientId !== null;
+      let clientId = `legacy:${i}:${stepIndex}`;
+      if (hasClientId) {
+        if (!['string', 'number'].includes(typeof rawClientId)) {
+          push(`levels[${i}].steps[${stepIndex}].clientId`, 'Step ID must be a string or number.');
+        } else {
+          clientId = String(rawClientId).trim();
+          if (!clientId) push(`levels[${i}].steps[${stepIndex}].clientId`, 'Step ID cannot be empty.');
+        }
+      }
+
+      const rawBoundSourceStepId = step?.boundSourceStepId ?? step?.bound_source_step_id;
+      let boundSourceStepId = null;
+      if (rawBoundSourceStepId !== undefined && rawBoundSourceStepId !== null) {
+        if (!['string', 'number'].includes(typeof rawBoundSourceStepId)) {
+          push(
+            `levels[${i}].steps[${stepIndex}].boundSourceStepId`,
+            'Bound source step ID must be a string or number.'
+          );
+        } else {
+          boundSourceStepId = String(rawBoundSourceStepId).trim();
+          if (!boundSourceStepId) {
+            push(`levels[${i}].steps[${stepIndex}].boundSourceStepId`, 'Bound source step ID cannot be empty.');
+          }
+        }
+      }
+      return { ...step, clientId, hasClientId, boundSourceStepId };
+    });
+
+    const rawBindPrevious = lvl?.bindPrevious ?? lvl?.bind_previous;
+    if (rawBindPrevious !== undefined && typeof rawBindPrevious !== 'boolean') {
+      push(`levels[${i}].bindPrevious`, 'Bind routing must be a boolean.');
+    }
+    const bindPrevious =
+      rawBindPrevious === undefined ? steps.some((step) => step.boundSourceStepId !== null) : rawBindPrevious === true;
+
     return {
       depth: Number(lvl?.depth),
       multiOutput: Boolean(lvl?.multiOutput),
       consumesAll: Boolean(lvl?.consumesAll ?? lvl?.consume_all_previous),
+      bindPrevious,
       outputFormat,
-      steps: Array.isArray(lvl?.steps) ? lvl.steps : [],
+      steps,
     };
   });
 
@@ -327,6 +367,96 @@ export function validateWorkflow(body) {
   }
   // Depth 0 may have sibling steps too; like any level they share its output
   // format and multi_output flag (enforced structurally by the level model).
+
+  // --- optional one-to-one routing between adjacent sibling depths ---
+  const clientIds = new Map();
+  for (const lvl of normLevels) {
+    lvl.steps.forEach((step, stepIndex) => {
+      if (!step.clientId) return;
+      if (clientIds.has(step.clientId)) {
+        push(
+          `levels[depth=${lvl.depth}].steps[${stepIndex}].clientId`,
+          `Step ID "${step.clientId}" is used more than once.`
+        );
+      } else {
+        clientIds.set(step.clientId, { depth: lvl.depth, stepIndex });
+      }
+    });
+  }
+
+  for (const lvl of normLevels) {
+    const boundSteps = lvl.steps.filter((step) => step.boundSourceStepId !== null);
+    if (!lvl.bindPrevious) {
+      if (boundSteps.length) {
+        push(`levels[depth=${lvl.depth}].bindPrevious`, 'Enable bind routing before assigning bound source steps.');
+      }
+      continue;
+    }
+
+    if (lvl.depth === 0) {
+      push(`levels[depth=${lvl.depth}].bindPrevious`, 'Depth 0 cannot bind to a previous depth.');
+      continue;
+    }
+    if (lvl.consumesAll) {
+      push(`levels[depth=${lvl.depth}].bindPrevious`, 'Bind routing cannot be combined with batch consumption.');
+    }
+
+    const previous = levelAt(lvl.depth - 1);
+    if (!previous) continue;
+    if (previous.steps.length < 2 || lvl.steps.length < 2) {
+      push(`levels[depth=${lvl.depth}].bindPrevious`, 'Bind routing requires at least two steps in both depths.');
+    }
+    if (previous.steps.length !== lvl.steps.length) {
+      push(
+        `levels[depth=${lvl.depth}].bindPrevious`,
+        `Bind routing requires the previous and current depths to have the same number of steps (${previous.steps.length} and ${lvl.steps.length}).`
+      );
+    }
+
+    for (const [sourceIndex, source] of previous.steps.entries()) {
+      if (!source.hasClientId) {
+        push(
+          `levels[depth=${previous.depth}].steps[${sourceIndex}].clientId`,
+          'A stable step ID is required when the next depth uses bind routing.'
+        );
+      }
+    }
+
+    const previousIds = new Set(previous.steps.map((step) => step.clientId));
+    const usedSourceIds = new Set();
+    lvl.steps.forEach((step, stepIndex) => {
+      const field = `levels[depth=${lvl.depth}].steps[${stepIndex}].boundSourceStepId`;
+      if (!step.hasClientId) {
+        push(
+          `levels[depth=${lvl.depth}].steps[${stepIndex}].clientId`,
+          'A stable step ID is required for a bound destination step.'
+        );
+      }
+      if (!step.boundSourceStepId) {
+        push(field, 'Every destination step needs a bound source step.');
+        return;
+      }
+      if (!previousIds.has(step.boundSourceStepId)) {
+        push(field, 'The bound source must be a step in the immediately previous depth.');
+        return;
+      }
+      if (usedSourceIds.has(step.boundSourceStepId)) {
+        push(field, 'Each source step can be bound to only one destination step.');
+        return;
+      }
+      usedSourceIds.add(step.boundSourceStepId);
+    });
+
+    for (const sourceId of previousIds) {
+      if (!usedSourceIds.has(sourceId)) {
+        push(
+          `levels[depth=${lvl.depth}].bindPrevious`,
+          'Every source step must be bound to exactly one destination step.'
+        );
+        break;
+      }
+    }
+  }
 
   // --- per-level output format + global key uniqueness ---
   const keyCount = {};

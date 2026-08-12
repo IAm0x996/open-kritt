@@ -20,6 +20,7 @@ RUNTIME_ENV_ALIASES = {
     "ENGINE_WORKSPACE_SETUP_CONCURRENCY": ("ENGINE_WORKSPACE_SETUP_CONCURRENCY",),
     "ENGINE_POST_PROCESS_WORKSPACE_MODE": ("ENGINE_POST_PROCESS_WORKSPACE_MODE",),
     "ENGINE_RETRY_COUNT": ("ENGINE_RETRY_COUNT",),
+    "ENGINE_CYBER_SAFETY_RETRY_COUNT": ("ENGINE_CYBER_SAFETY_RETRY_COUNT",),
     "ENGINE_HARNESS_TIMEOUT_SECONDS": ("ENGINE_HARNESS_TIMEOUT_SECONDS",),
 }
 
@@ -59,6 +60,7 @@ def ensure_runtime_config_file(data_dir: str | None = None) -> Path:
         "ENGINE_WORKSPACE_SETUP_CONCURRENCY": os.getenv("ENGINE_WORKSPACE_SETUP_CONCURRENCY") or "2",
         "ENGINE_POST_PROCESS_WORKSPACE_MODE": os.getenv("ENGINE_POST_PROCESS_WORKSPACE_MODE") or "copy",
         "ENGINE_RETRY_COUNT": os.getenv("ENGINE_RETRY_COUNT") or "2",
+        "ENGINE_CYBER_SAFETY_RETRY_COUNT": os.getenv("ENGINE_CYBER_SAFETY_RETRY_COUNT") or "0",
         "ENGINE_HARNESS_TIMEOUT_SECONDS": os.getenv("ENGINE_HARNESS_TIMEOUT_SECONDS") or "7200",
     }
 
@@ -79,6 +81,7 @@ def ensure_runtime_config_file(data_dir: str | None = None) -> Path:
         "# ENGINE_SCAN_RUNNER_MEMORY_MB is the Docker hard limit per runner.",
         "# ENGINE_SCAN_RUNNER_MEMORY_RESERVATION_MB is the scheduler and Docker soft reservation per runner.",
         "# ENGINE_RETRY_COUNT and ENGINE_HARNESS_TIMEOUT_SECONDS apply to future model calls.",
+        "# ENGINE_CYBER_SAFETY_RETRY_COUNT=0 fails on the first policy block; positive values opt into retries.",
         "# ENGINE_WORKSPACE_SETUP_CONCURRENCY requires an engine recreation to take effect.",
         "# ENGINE_POST_PROCESS_WORKSPACE_MODE=image uses immutable Docker snapshots for workflow and post-processing jobs.",
         "# Accounts updates ENGINE_CODEX_HOME and ENGINE_CLAUDE_HOME live; no engine restart is required.",

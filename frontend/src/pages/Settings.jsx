@@ -86,6 +86,12 @@ const PRESENTATION = {
     description:
       'Additional attempts for retryable workflow-step and post-script failures. This does not automatically resume a failed whole scan.',
   },
+  cyberSafetyRetryCount: {
+    label: 'Cyber-block retries',
+    unit: 'retries',
+    description:
+      'Additional attempts made only when a provider blocks a request under its cybersecurity safety policy. Set 0 to fail after the first blocked attempt.',
+  },
   harnessTimeoutSeconds: {
     label: 'Model-call timeout',
     unit: 'seconds',
@@ -347,6 +353,7 @@ function RuntimeSetting({ name, presentation, setting, value, issue, disabled, i
   const numericValue = rawValue && Number.isFinite(Number(rawValue)) ? Number(rawValue) : null;
   const aboveRecommendation = numericValue !== null && numericValue > setting.recommendedMax;
   const paused = name === 'workerCount' && numericValue === 0;
+  const cyberRetryEnabled = name === 'cyberSafetyRetryCount' && numericValue !== null && numericValue > 0;
   return (
     <article className="settings-card">
       <div className="settings-card-topline">
@@ -377,13 +384,15 @@ function RuntimeSetting({ name, presentation, setting, value, issue, disabled, i
       {!setting.valid && !issue && (
         <div className="settings-field-error">The stored value was invalid; the safe default is shown.</div>
       )}
-      {(aboveRecommendation || paused || ignored) && !issue && (
+      {(aboveRecommendation || paused || ignored || cyberRetryEnabled) && !issue && (
         <div className="settings-field-warning">
           {ignored
             ? 'This threshold is preserved but not enforced while the low-storage safeguard is ignored.'
             : paused
               ? 'New engine work will remain queued until worker slots are raised above zero.'
-              : `Above the conservative recommendation of ${setting.recommendedMax}; verify provider and host capacity.`}
+              : cyberRetryEnabled
+                ? `A blocked request may run up to ${numericValue + 1} total attempts. The provider may reject every attempt.`
+                : `Above the conservative recommendation of ${setting.recommendedMax}; verify provider and host capacity.`}
         </div>
       )}
       <div className="settings-card-meta">
