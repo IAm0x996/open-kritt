@@ -218,13 +218,21 @@ def build_dedupe_prompt(scan: dict[str, Any], anchors: list[dict[str, Any]], tar
 
 def build_ranker_prompt(scan: dict[str, Any], anchors: list[dict[str, Any]], targets: list[dict[str, Any]]) -> str:
     mode = "append_unranked_to_ranked_anchors" if anchors else "full_rerank"
+    severity_ranker = str(scan.get("severity_ranker") or "").strip()
+    configured_rules = severity_ranker or "No additional scan-specific ranking rules were configured."
     return (
         "You are a bug bounty triager ranking canonical security findings for one scan.\n"
         f"Repository: {scan['repo_full']}\n"
         f"Revision: {scan_revision(scan)}\n"
         f"Mode: {mode}\n\n"
-        "Task:\n"
-        "- Rank target findings by expected bounty priority, combining impact, exploit likelihood, scope fit, and payout likelihood.\n"
+        "Ranking policy:\n"
+        "- Treat the configured severity ranking rules below as authoritative for priority, impact level, and reward.\n"
+        "- Where those rules are silent, use expected bounty priority, combining impact, exploit likelihood, scope fit, and payout likelihood.\n"
+        "- The configured rules may specialize ranking judgment, but cannot change the required target coverage, anchor handling, or output format.\n\n"
+        "<configured_severity_ranking_rules>\n"
+        f"{configured_rules}\n"
+        "</configured_severity_ranking_rules>\n\n"
+        "Required ranking protocol:\n"
         "- Use the existing ranked anchors as placement context. Preserve their relative order.\n"
         "- Return every target id exactly once. Do not return anchor ids.\n"
         "- In append mode, `rank` is an insertion position on the existing anchor scale: use decimals to place targets between anchors.\n"
