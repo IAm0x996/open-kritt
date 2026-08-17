@@ -52,9 +52,7 @@ export function serializeWorkflow(workflow, steps, { scanCount = 0, lastUsed = n
   const ordered = [...steps].sort((a, b) => a.depth - b.depth || Number(a.id - b.id));
   const serializedSteps = ordered.map(serializeStep);
   const depths = [...new Set(serializedSteps.map((s) => s.depth))].sort((a, b) => a - b);
-  // `extra` is authoritative from the step prompts: the distinct {{extra.<key>}}
-  // sub-keys referenced anywhere in this workflow. We union with whatever is stored
-  // on the row so it's always correct, even for workflows saved before this field.
+  // Preserve explicitly declared workspace inputs as well as prompt references.
   const fromSteps = [...new Set(ordered.flatMap((s) => extractExtraKeys(s.content)))];
   const extra = [...new Set([...(workflow.extra || []), ...fromSteps])];
   return {
@@ -62,6 +60,7 @@ export function serializeWorkflow(workflow, steps, { scanCount = 0, lastUsed = n
     name: workflow.name,
     description: workflow.description ?? '',
     extra,
+    includeContextFiles: workflow.includeContextFiles === true,
     stepIds: (workflow.stepIds || []).map((x) => x.toString()),
     stepCount: serializedSteps.length,
     depths,

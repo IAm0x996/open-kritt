@@ -23,6 +23,8 @@ describe('workflow transfer files', () => {
       id: '701',
       name: 'Endpoint inventory',
       description: 'Map public application endpoints.',
+      extra: ['whitepaper'],
+      includeContextFiles: true,
       insertedAt: '2026-07-20T00:00:00Z',
       scanCount: 9,
       steps: [
@@ -57,6 +59,8 @@ describe('workflow transfer files', () => {
       workflow: {
         name: 'Endpoint inventory',
         description: 'Map public application endpoints.',
+        extra: ['whitepaper'],
+        includeContextFiles: true,
         levels: [
           {
             depth: 0,
@@ -101,6 +105,8 @@ describe('workflow transfer files', () => {
     });
 
     expect(payload.name).toBe('Imported workflow');
+    expect(payload.extra).toEqual([]);
+    expect(payload.includeContextFiles).toBe(false);
     expect(payload.levels[0]).toMatchObject({
       depth: 0,
       multiOutput: true,
@@ -139,6 +145,8 @@ describe('workflow transfer files', () => {
     expect(payload).toEqual({
       name: 'Manual API export',
       description: '',
+      extra: [],
+      includeContextFiles: false,
       levels: [
         {
           depth: 0,
@@ -171,6 +179,20 @@ describe('workflow transfer files', () => {
       'unsupported open-kritt-workflow version "3"'
     );
     expect(() => workflowPayloadFromImport([])).toThrow('JSON root must be an object');
+    expect(() =>
+      workflowPayloadFromImport({
+        name: 'Unsafe extra',
+        extra: ['__proto__'],
+        levels: [
+          {
+            depth: 0,
+            multiOutput: false,
+            outputFormat: terminalFormat,
+            steps: [{ name: 'Analyze', content: 'Analyze {{repo_full}}.' }],
+          },
+        ],
+      })
+    ).toThrow('workflow.extra[0] must be an identifier');
   });
 
   it('round-trips stable one-to-one bindings in version 2 files', () => {

@@ -130,8 +130,9 @@ model Workflow {
   stepIds     BigInt[] @default([]) @map("step_ids")
   name        String
   description String?
-  // Distinct {{extra.<key>}} sub-keys referenced across this workflow's steps.
+  // Extra scan-input keys declared by or referenced across this workflow.
   extra       String[] @default([])
+  includeContextFiles Boolean  @default(false) @map("include_context_files")
   insertedAt  DateTime @default(now()) @map("inserted_at") @db.Timestamptz(6)
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

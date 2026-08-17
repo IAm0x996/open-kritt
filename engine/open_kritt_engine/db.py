@@ -725,7 +725,12 @@ class Database:
                     ),
                 )
             )
-        return Workflow(id=_to_int(workflow["id"]), name=workflow["name"], steps=tuple(steps))
+        return Workflow(
+            id=_to_int(workflow["id"]),
+            name=workflow["name"],
+            steps=tuple(steps),
+            include_context_files=bool(workflow.get("include_context_files", False)),
+        )
 
     def load_completed_metadata(self, conn, scan_id: int) -> set[tuple[int, int, str | None, int]]:
         return self.load_metadata_keys(conn, scan_id, ("completed",))

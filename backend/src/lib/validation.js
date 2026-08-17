@@ -260,6 +260,18 @@ export function validateWorkflow(body) {
 
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   if (!name) push('name', 'Workflow name is required.');
+  if (body?.includeContextFiles !== undefined && typeof body.includeContextFiles !== 'boolean') {
+    push('includeContextFiles', 'Include context files must be a boolean.');
+  }
+  const declaredExtraKeys = body?.extra === undefined ? [] : body.extra;
+  if (!Array.isArray(declaredExtraKeys)) {
+    push('extra', 'Extra input keys must be an array.');
+  } else {
+    if (declaredExtraKeys.length > 1_000) push('extra', 'At most 1,000 extra input keys are allowed.');
+    declaredExtraKeys.slice(0, 1_000).forEach((key, index) => {
+      if (!isValidKey(key)) push(`extra[${index}]`, 'Extra input keys must be safe identifier names.');
+    });
+  }
 
   const levels = Array.isArray(body?.levels) ? body.levels : null;
   if (!levels || levels.length === 0) {
@@ -536,17 +548,21 @@ export function validateWorkflow(body) {
   if (errors.length) throw new ValidationError(errors);
 
   // Collect the distinct {{extra.<key>}} sub-keys referenced anywhere in the workflow.
-  const extraKeys = [
+  const referencedExtraKeys = [
     ...new Set(
       normLevels.flatMap((lvl) =>
         lvl.steps.flatMap((s) => extractExtraKeys(typeof s?.content === 'string' ? s.content : ''))
       )
     ),
   ];
+  const extraKeys = [
+    ...new Set([...(Array.isArray(declaredExtraKeys) ? declaredExtraKeys : []), ...referencedExtraKeys]),
+  ];
 
   return {
     name,
     description: typeof body.description === 'string' ? body.description : null,
+    includeContextFiles: body?.includeContextFiles === true,
     maxDepth,
     // Persist the EFFECTIVE batching flag (only true when the previous depth is multi).
     levels: normLevels

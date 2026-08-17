@@ -49,7 +49,13 @@ export async function ensureDefaultWorkflows(client = prisma) {
         }
       }
 
-      const data = { name: workflow.name, description: workflow.description, stepIds, extra: workflow.extra || [] };
+      const data = {
+        name: workflow.name,
+        description: workflow.description,
+        stepIds,
+        extra: workflow.extra || [],
+        includeContextFiles: workflow.includeContextFiles === true,
+      };
       const saved = existing
         ? await tx.workflow.update({ where: { id: existing.id }, data })
         : await tx.workflow.create({ data });

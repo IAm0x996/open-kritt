@@ -31,6 +31,8 @@ function blankBuilder() {
   return {
     name: 'untitled-workflow',
     description: '',
+    extra: [],
+    includeContextFiles: false,
     schemaMode: 'visual',
     selStepId: 'b0',
     levels: [
@@ -55,7 +57,13 @@ function blankBuilder() {
 }
 
 function workflowSnapshot(builder) {
-  return JSON.stringify({ name: builder.name, description: builder.description, levels: builder.levels });
+  return JSON.stringify({
+    name: builder.name,
+    description: builder.description,
+    extra: builder.extra,
+    includeContextFiles: builder.includeContextFiles,
+    levels: builder.levels,
+  });
 }
 
 export function workflowDraftIsDirty(builder, initialSnapshot, unsavedSource = false) {
@@ -401,6 +409,8 @@ export function builderFromWorkflow(wf, { copy = false, selectedStepId = null } 
   return {
     name,
     description: wf.description || '',
+    extra: Array.isArray(wf.extra) ? wf.extra : [],
+    includeContextFiles: wf.includeContextFiles === true,
     schemaMode: 'visual',
     selStepId: requestedStepExists ? selectedStepId : levels[0].steps[0].id,
     levels,
@@ -692,6 +702,8 @@ export default function WorkflowBuilder() {
     const payload = {
       name: b.name.trim(),
       description: b.description,
+      extra: b.includeContextFiles === true ? b.extra : [],
+      includeContextFiles: b.includeContextFiles === true,
       levels: b.levels.map((l) => ({
         depth: l.depth,
         multiOutput: l.multiOutput,
@@ -775,6 +787,33 @@ export default function WorkflowBuilder() {
               padding: 0,
             }}
           />
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 9,
+              marginTop: 16,
+              padding: '10px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              background: 'var(--surface)',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={b.includeContextFiles === true}
+              onChange={(event) => mut((next) => (next.includeContextFiles = event.target.checked))}
+              style={{ marginTop: 2 }}
+            />
+            <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <strong style={{ fontSize: 12.5, color: 'var(--text)' }}>Attach extra inputs to workspace</strong>
+              <span style={{ fontSize: 11.5, lineHeight: 1.45, color: 'var(--text-3)' }}>
+                Adds configuration and extra inputs as files, then tells each step to inspect only the relevant parts.
+              </span>
+            </span>
+          </label>
 
           {generationId && (
             <div

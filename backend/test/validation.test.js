@@ -36,6 +36,25 @@ function workflowWithTerminal(outputFormat) {
   };
 }
 
+test('validateWorkflow preserves declared workspace inputs and its attachment option', () => {
+  const workflow = workflowWithTerminal(terminalOutput);
+  workflow.includeContextFiles = true;
+  workflow.extra = ['whitepaper'];
+  workflow.levels[0].steps[0].content += ' Rank with {{extra.ranker_details}}.';
+
+  const valid = validateWorkflow(workflow);
+
+  assert.equal(valid.includeContextFiles, true);
+  assert.deepEqual(valid.extraKeys, ['whitepaper', 'ranker_details']);
+  assert.throws(
+    () => validateWorkflow({ ...workflow, includeContextFiles: 'yes', extra: ['bad-key'] }),
+    (error) =>
+      error instanceof ValidationError &&
+      error.errors.some((item) => item.field === 'includeContextFiles') &&
+      error.errors.some((item) => item.field === 'extra[0]')
+  );
+});
+
 test('validateSeverityRanker requires name and content', () => {
   assert.throws(() => validateSeverityRanker({ name: '', content: '' }), ValidationError);
   const ok = validateSeverityRanker({ name: 'baseline', content: '1. rule', description: '  trim me  ' });

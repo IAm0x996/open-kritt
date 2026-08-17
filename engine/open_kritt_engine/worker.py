@@ -69,6 +69,8 @@ from .workspace import (
     scan_checkout_cache_entry_prefixes,
     scan_checkout_cache_key,
     workspace_context,
+    workspace_context_file_references,
+    workspace_context_files_prompt,
     workspace_prompt_context,
 )
 from .workspace_snapshots import cleanup_stale_workspace_snapshot_builders
@@ -1242,13 +1244,23 @@ class Worker:
                     job=job,
                     harness=self._harness_for_model_selection(model_selection),
                     model_selection=model_selection,
+                    include_context_files=bool(getattr(workflow, "include_context_files", False)),
                 )
                 if did_claim:
                     return True
             if not did_claim:
                 return did_work
 
-    def execute_job(self, *, scan, workflow_id, job, harness, model_selection: ModelSelection | None = None):
+    def execute_job(
+        self,
+        *,
+        scan,
+        workflow_id,
+        job,
+        harness,
+        model_selection: ModelSelection | None = None,
+        include_context_files: bool = False,
+    ):
         step = job.step
         state = job.state
         metadata_id = None
@@ -1317,14 +1329,17 @@ class Worker:
                         harness_name=harness_name,
                         model_provider=model_provider,
                         use_snapshot_image=image_workspace_enabled(data_dir=getattr(self.config, "data_dir", None)),
+                        include_context_files=include_context_files,
                     )
                     checked_out_commit = prepared.checked_out_commit
                     context = {**state.context, **workspace_context(prepared)}
+                    context = workspace_context_file_references(context, prepared)
                     rendered_prompt = render_prompt(step.content, context)
                     prompt_parts = [
                         native_agent_skills_prompt(agent_skills, harness_name),
                         workspace_prompt_context(prepared.layout, prepared.manifest_json),
                         rendered_prompt,
+                        workspace_context_files_prompt(prepared),
                         repeat_append_prompt(state.repeat_run, prior_repeat_results),
                     ]
                     prompt_filled = harness_prompt(
