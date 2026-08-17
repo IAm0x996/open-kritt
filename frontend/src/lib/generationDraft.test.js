@@ -44,6 +44,8 @@ describe('generation drafts', () => {
     );
 
     expect(builder.name).toBe('external-impact-research');
+    expect(builder.extra).toEqual([]);
+    expect(builder.includeContextFiles).toBe(false);
     expect(builder.levels.map((level) => level.depth)).toEqual([0, 1]);
     expect(builder.levels[0].schema).toEqual([{ key: 'entrypoints', type: 'array' }]);
     expect(builder.levels[0].steps[0].id).toBe('draft-2');

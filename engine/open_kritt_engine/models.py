@@ -111,6 +111,7 @@ class Workflow:
     id: int
     name: str
     steps: tuple[Step, ...]
+    include_context_files: bool = False
 
     @property
     def depths(self):

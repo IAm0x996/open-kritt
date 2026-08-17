@@ -19,7 +19,7 @@ import {
   workflowStepBindingMarkers,
 } from './WorkflowBuilder.jsx';
 
-const builder = { name: 'copy-of-source', description: '', levels: [] };
+const builder = { name: 'copy-of-source', description: '', extra: [], includeContextFiles: false, levels: [] };
 
 describe('workflowDraftIsDirty', () => {
   it('treats a duplicate or generated workflow as an unsaved draft', () => {
@@ -31,6 +31,7 @@ describe('workflowDraftIsDirty', () => {
     const initial = JSON.stringify(builder);
     expect(workflowDraftIsDirty(builder, initial)).toBe(false);
     expect(workflowDraftIsDirty({ ...builder, name: 'changed' }, initial)).toBe(true);
+    expect(workflowDraftIsDirty({ ...builder, includeContextFiles: true }, initial)).toBe(true);
   });
 });
 

@@ -14,7 +14,7 @@ SNAPSHOT_LABEL = "open-kritt.workspace-snapshot"
 SNAPSHOT_KEY_LABEL = "open-kritt.workspace-snapshot-key"
 SNAPSHOT_BUILDER_LABEL = "open-kritt.workspace-snapshot-builder"
 SNAPSHOT_LEASE_LABEL = "open-kritt.workspace-snapshot-lease"
-SNAPSHOT_FORMAT_VERSION = 1
+SNAPSHOT_FORMAT_VERSION = 2
 SNAPSHOT_IMAGE_REPOSITORY = "open-kritt-workspace-snapshot"
 _SNAPSHOT_LOCKS: dict[str, threading.Lock] = {}
 _SNAPSHOT_LOCKS_GUARD = threading.Lock()
@@ -82,6 +82,7 @@ def workspace_snapshot_key(
     base_image_id: str,
     checkout_key: str,
     manifest_json: str,
+    workspace_files_digest: str = "",
 ) -> str:
     payload = json.dumps(
         {
@@ -89,6 +90,7 @@ def workspace_snapshot_key(
             "base_image_id": base_image_id,
             "checkout_key": checkout_key,
             "manifest_json": manifest_json,
+            "workspace_files_digest": workspace_files_digest,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -156,12 +158,15 @@ def ensure_workspace_snapshot_image(
     workspace_files_dir: str,
     sources: list[tuple[str, str]],
     scan_id: int | str | None = None,
+    additional_workspace_entries: tuple[str, ...] = (),
+    workspace_files_digest: str = "",
 ) -> str:
     base_id = _base_image_id(base_image)
     key = workspace_snapshot_key(
         base_image_id=base_id,
         checkout_key=checkout_key,
         manifest_json=manifest_json,
+        workspace_files_digest=workspace_files_digest,
     )
     image = workspace_snapshot_image_name(key)
     with _snapshot_lock(key):
@@ -200,6 +205,16 @@ def ensure_workspace_snapshot_image(
                 _run_docker(
                     ["cp", str(source_file), f"{builder}:/workspace/{filename}"],
                     timeout_seconds=60,
+                )
+            for relative_entry in additional_workspace_entries:
+                if not relative_entry or Path(relative_entry).is_absolute() or ".." in Path(relative_entry).parts:
+                    raise WorkspaceSnapshotError("Additional workspace entry must be a safe relative path.")
+                source_entry = Path(workspace_files_dir) / relative_entry
+                if not source_entry.exists() or source_entry.is_symlink():
+                    raise WorkspaceSnapshotError(f"Additional workspace entry is unavailable: {source_entry}")
+                _run_docker(
+                    ["cp", str(source_entry), f"{builder}:/workspace/{relative_entry}"],
+                    timeout_seconds=600,
                 )
             changes = [
                 "--change",

@@ -42,6 +42,8 @@ export function workflowBuilderFromGeneration(result, nextId) {
   return {
     name: result.name,
     description: typeof result.description === 'string' ? result.description : '',
+    extra: [],
+    includeContextFiles: false,
     schemaMode: 'visual',
     selStepId: levels[0].steps[0].id,
     levels,
