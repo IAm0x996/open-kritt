@@ -1,5 +1,3 @@
-import { isValidKey } from './keys.js';
-
 export const WORKFLOW_FILE_KIND = 'open-kritt-workflow';
 export const WORKFLOW_FILE_VERSION = 2;
 export const WORKFLOW_IMPORT_MAX_BYTES = 2 * 1024 * 1024;
@@ -45,21 +43,6 @@ function normalizeBoolean(value, field) {
   if (value === undefined || value === null) return false;
   if (typeof value !== 'boolean') throw workflowError(`${field} must be a boolean.`);
   return value;
-}
-
-function normalizeExtraKeys(value) {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw workflowError('workflow.extra must be an array.');
-  return [
-    ...new Set(
-      value.map((key, index) => {
-        if (!isValidKey(key)) {
-          throw workflowError(`workflow.extra[${index}] must be an identifier.`);
-        }
-        return key;
-      })
-    ),
-  ];
 }
 
 function normalizeLevel(level, index) {
@@ -200,17 +183,10 @@ function normalizeWorkflow(workflow) {
     levels = levelsFromSerializedSteps(workflow.steps);
   }
   validateBindings(levels);
-  const dedupeStep3 = normalizeBoolean(workflow.dedupeStep3, 'workflow.dedupeStep3');
-  if (dedupeStep3 && !levels.some((level) => level.depth === 2)) {
-    throw workflowError('workflow.dedupeStep3 requires a depth 2.');
-  }
 
   return {
     name: workflow.name.trim(),
     description: workflow.description || '',
-    extra: normalizeExtraKeys(workflow.extra),
-    includeContextFiles: normalizeBoolean(workflow.includeContextFiles, 'workflow.includeContextFiles'),
-    dedupeStep3,
     levels,
   };
 }

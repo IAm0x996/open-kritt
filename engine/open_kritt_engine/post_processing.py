@@ -14,7 +14,7 @@ from .harnesses import (
     normalize_harness_name,
 )
 from .model_output_artifacts import record_model_error_output
-from .models import post_processing_model_selection
+from .models import post_processing_model_selection, supplemental_post_script_model_selection
 from .prompting import (
     append_schema_prompt,
     harness_prompt,
@@ -477,6 +477,124 @@ class PostProcessor:
             harness,
             allow_complete=not ranking_pending,
         )
+
+    def process_supplemental_post_script_target(
+        self,
+        job: dict[str, Any],
+        harness,
+        *,
+        metadata_id: int,
+    ) -> bool:
+        """Run a snapshotted post-script for one explicitly selected finding."""
+
+        scan = job["scan"]
+        run = job["run"]
+        target = job["target"]
+        vulnerability = job["vulnerability"]
+        scan_extra = scan.get("extra") if isinstance(scan.get("extra"), dict) else {}
+        run_extra = run.get("extra") if isinstance(run.get("extra"), dict) else {}
+        selection = supplemental_post_script_model_selection(scan, run)
+        scan_configuration = scan.get("configuration") if isinstance(scan.get("configuration"), dict) else {}
+        contextual_scan = {
+            **scan,
+            "configuration": {
+                **scan_configuration,
+                "post_processing_model": selection.model,
+                "post_processing_model_provider": selection.model_provider,
+                "post_processing_harness": selection.harness,
+                "post_processing_thinking_effort": selection.thinking_effort,
+            },
+            "extra": {**scan_extra, **run_extra},
+        }
+        prompt_template = run["post_script_content"]
+        if str(run.get("post_script_name") or "").strip().casefold() == "patched since":
+            prompt_template = patched_since_prompt(prompt_template)
+        schema = output_schema(run["post_script_output_format"], multi_output=False)
+
+        def validator(payload):
+            return validate_payload(payload, schema, multi_output=False)
+
+        started = now_utc()
+        try:
+            payload, usage, codex_session_id, checked_out_commit = self._run_harness_with_retries(
+                metadata_id=metadata_id,
+                scan=contextual_scan,
+                harness=harness,
+                prompt="",
+                schema=schema,
+                validator=validator,
+                prompt_template=prompt_template,
+                prompt_context=post_script_context(contextual_scan, vulnerability),
+                multi_output=False,
+                kind="supplemental_post_script",
+            )
+            rows = validate_payload(payload, schema, multi_output=False)
+            result = rows[0] if rows else {}
+            run_time_ms = int((now_utc() - started).total_seconds() * 1000)
+            with self.db.connect() as conn:
+                enrichment_id = self.db.upsert_vulnerability_enrichment(
+                    conn,
+                    scan_id=_int(scan["id"]),
+                    vulnerability_id=_int(vulnerability["id"]),
+                    post_script_id=_int(run["post_script_id"]),
+                    post_script_name=run["post_script_name"],
+                    result=result,
+                    stub=bool(payload.get("stub")),
+                    stub_explanation=(payload.get("stub_explanation") or "").strip() or None,
+                    supplemental_run_id=_int(run["id"]),
+                )
+                self.db.update_post_process_metadata(
+                    conn,
+                    metadata_id,
+                    status="completed",
+                    error=None,
+                    run_time_ms=run_time_ms,
+                    raw_token_usage=usage,
+                    output_json=payload,
+                    codex_session_id=codex_session_id,
+                    checked_out_commit=checked_out_commit,
+                    phase="completed",
+                )
+                self.db.complete_supplemental_post_script_target(
+                    conn,
+                    target_id=_int(target["id"]),
+                    enrichment_id=enrichment_id,
+                )
+                conn.commit()
+            return True
+        except PostProcessRateLimited as exc:
+            run_time_ms = int((now_utc() - started).total_seconds() * 1000)
+            with self.db.connect() as conn:
+                self.db.update_post_process_metadata(
+                    conn,
+                    metadata_id,
+                    status="interrupted",
+                    error=str(exc),
+                    run_time_ms=run_time_ms,
+                    raw_token_usage=None,
+                    phase="interrupted",
+                )
+                conn.commit()
+            raise
+        except Exception as exc:
+            run_time_ms = int((now_utc() - started).total_seconds() * 1000)
+            with self.db.connect() as conn:
+                self.db.update_post_process_metadata(
+                    conn,
+                    metadata_id,
+                    status="failed",
+                    error=str(exc),
+                    run_time_ms=run_time_ms,
+                    raw_token_usage=None,
+                    phase="failed",
+                )
+                self.db.fail_supplemental_post_script_target(
+                    conn,
+                    target_id=_int(target["id"]),
+                    error=str(exc),
+                )
+                conn.commit()
+            return True
 
     def _agent_skills(self, scan: dict[str, Any]) -> list[dict[str, Any]]:
         if not hasattr(self.db, "load_agent_skills"):
@@ -953,6 +1071,7 @@ class PostProcessor:
                           FROM workflows.vulnerability_enrichments e
                           WHERE e.vulnerability_id = v.id
                             AND e.post_script_id = %s
+                            AND e.supplemental_run_id IS NULL
                       )
                       AND NOT EXISTS (
                           SELECT 1

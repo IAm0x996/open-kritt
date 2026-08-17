@@ -1,5 +1,4 @@
 import logging
-import os
 import random
 import shutil
 import threading
@@ -20,11 +19,10 @@ from .artifact_cleanup import (
     delete_quarantined_artifacts,
 )
 from .claude_auth import ClaudeCredentialRateLimited
-from .codex_auth import preserve_codex_auth_metadata
 from .codex_updater import CodexCliGate, CodexUpdater
 from .config import EngineConfig
 from .db import QUOTA_RETRY_MAX_SECONDS, Database, now_utc
-from .generation import GenerationRunner, GenerationValidationError, generation_environment
+from .generation import GenerationRunner, GenerationValidationError
 from .harnesses import (
     CAPACITY_RATE_LIMIT_FAILURES,
     RETRYABLE_RATE_LIMIT_FAILURES,
@@ -46,14 +44,20 @@ from .memory_budget import (
 )
 from .model_catalog import ModelCatalogRefresher
 from .model_output_artifacts import record_model_error_output
-from .models import ModelSelection, model_selection_for_depth, post_processing_model_selection
-from .post_processing import PostProcessor, PostProcessRateLimited
-from .pre_step_dedupe import (
-    PRE_STEP_3_DEDUPE_SCHEMA,
-    build_pre_step_3_dedupe_prompt,
-    validate_pre_step_3_dedupe_decision,
+from .models import (
+    ModelSelection,
+    model_selection_for_depth,
+    post_processing_model_selection,
+    supplemental_post_script_model_selection,
 )
-from .prompting import harness_prompt, native_agent_skills_prompt, render_prompt, repeat_append_prompt
+from .post_processing import PostProcessor, PostProcessRateLimited
+from .prompting import (
+    harness_prompt,
+    native_agent_skills_prompt,
+    patched_since_prompt,
+    render_prompt,
+    repeat_append_prompt,
+)
 from .provider_credentials import provider_environment
 from .queue import build_pending_jobs, configured_step_ids
 from .runtime_config import runtime_bool, runtime_config_path, runtime_float, runtime_int, runtime_value
@@ -62,7 +66,6 @@ from .storage_cleanup import prune_docker_build_cache, prune_stopped_scan_contai
 from .workspace import (
     cleanup_job_workspace,
     cleanup_workspace,
-    codex_home_for_job,
     image_workspace_enabled,
     mark_provider_account_available,
     mark_provider_account_rate_limited,
@@ -77,8 +80,6 @@ from .workspace import (
     scan_checkout_cache_entry_prefixes,
     scan_checkout_cache_key,
     workspace_context,
-    workspace_context_file_references,
-    workspace_context_files_prompt,
     workspace_prompt_context,
 )
 from .workspace_snapshots import cleanup_stale_workspace_snapshot_builders
@@ -186,8 +187,7 @@ class Worker:
         self._scan_last_dispatch: dict[int, int] = {}
         self._scan_no_work_until: dict[int, float] = {}
         self._scan_dispatch_sequence = 0
-        self._pre_step_3_dedupe_locks_guard = threading.Lock()
-        self._pre_step_3_dedupe_locks: dict[int, threading.Lock] = {}
+        self._supplemental_dispatch_next: dict[int, bool] = {}
         self.codex_cli_gate = CodexCliGate()
         self.generation_runner = GenerationRunner(config, codex_cli_gate=self.codex_cli_gate)
         self.model_catalog_refresher = ModelCatalogRefresher(
@@ -542,175 +542,6 @@ class Worker:
             runner_memory_reservation_mb=self.runtime_scan_runner_memory_reservation_mb(),
         )
 
-    def _pre_step_3_dedupe_lock(self, scan_id: int) -> threading.Lock:
-        with self._pre_step_3_dedupe_locks_guard:
-            return self._pre_step_3_dedupe_locks.setdefault(scan_id, threading.Lock())
-
-    def _run_pre_step_3_dedupe(
-        self,
-        *,
-        scan: dict[str, Any],
-        workflow_id: int,
-        metadata_id: int,
-        job,
-        selection: ModelSelection,
-    ) -> bool:
-        """Complete a depth-2 lineage when a conservative tool-free check finds a duplicate."""
-
-        current_result = job.state.output if isinstance(job.state.output, dict) else {}
-        scan_id = int(scan["id"])
-        with self._pre_step_3_dedupe_lock(scan_id):
-            with self.db.connect() as conn:
-                candidates = self.db.load_pre_step_3_dedupe_candidates(
-                    conn,
-                    scan_id=scan_id,
-                    workflow_id=workflow_id,
-                    metadata_id=metadata_id,
-                    current_prev_id=job.state.prev_id,
-                )
-                dedupe_model = (
-                    selection.model
-                    if scan_model_provider({"model_provider": selection.model_provider}) == "codex"
-                    else self.db.load_default_model(conn, "codex")
-                )
-                conn.commit()
-
-            if not dedupe_model:
-                LOGGER.warning(
-                    "scan %s step %s duplicate gate has no configured Codex model; continuing with verification",
-                    scan_id,
-                    job.step.id,
-                )
-                return False
-
-            prompt = build_pre_step_3_dedupe_prompt(
-                current_id=job.state.prev_id,
-                current_result=current_result,
-                existing=candidates,
-            )
-            started = now_utc()
-            selected_home = codex_home_for_job(metadata_id, data_dir=getattr(self.config, "data_dir", None))
-            env = generation_environment("codex", codex_home=selected_home)
-            work_dir = os.path.join(getattr(self.config, "data_dir", "/tmp"), "pre-step-3-dedupe")
-            os.makedirs(work_dir, exist_ok=True)
-            dedupe_harness = harness_for(
-                "codex",
-                timeout_seconds=min(self.runtime_harness_timeout_seconds(), 300),
-                model_provider="codex",
-                codex_model_provider=getattr(self.config, "codex_model_provider", None),
-                codex_cli_gate=self.codex_cli_gate,
-            )
-            with self.db.connect() as conn:
-                self.db.update_metadata(
-                    conn,
-                    metadata_id,
-                    status="running",
-                    error=None,
-                    run_time_ms=0,
-                    raw_token_usage=None,
-                    prompt_filled=prompt,
-                    phase="checking_duplicates",
-                )
-                conn.commit()
-
-            result = None
-            try:
-                with provider_account_lease(
-                    "codex",
-                    selected_home,
-                    data_dir=getattr(self.config, "data_dir", None),
-                ):
-                    with preserve_codex_auth_metadata(env):
-                        result = dedupe_harness.run(
-                            prompt=prompt,
-                            schema=PRE_STEP_3_DEDUPE_SCHEMA,
-                            repo_dir=work_dir,
-                            model=dedupe_model,
-                            thinking_effort="high",
-                            env=env,
-                            allow_tools=False,
-                        )
-                mark_provider_account_available("codex", selected_home)
-                decision = validate_pre_step_3_dedupe_decision(
-                    result.payload,
-                    allowed_ids={int(row["id"]) for row in candidates},
-                )
-            except (HarnessError, ValueError) as exc:
-                if isinstance(exc, HarnessError) and exc.code in RETRYABLE_RATE_LIMIT_FAILURES:
-                    if exc.code not in CAPACITY_RATE_LIMIT_FAILURES:
-                        mark_provider_account_rate_limited("codex", selected_home)
-                LOGGER.warning(
-                    "scan %s step %s duplicate gate was inconclusive (%s); continuing with verification",
-                    scan_id,
-                    job.step.id,
-                    type(exc).__name__,
-                )
-                with self.db.connect() as conn:
-                    self.db.update_metadata(
-                        conn,
-                        metadata_id,
-                        status="running",
-                        error=None,
-                        run_time_ms=0,
-                        raw_token_usage=None,
-                        prompt_filled="",
-                        phase="building_workspace",
-                    )
-                    conn.commit()
-                return False
-
-            if not decision.is_duplicate:
-                with self.db.connect() as conn:
-                    self.db.update_metadata(
-                        conn,
-                        metadata_id,
-                        status="running",
-                        error=None,
-                        run_time_ms=0,
-                        raw_token_usage=None,
-                        prompt_filled="",
-                        phase="building_workspace",
-                    )
-                    conn.commit()
-                return False
-
-            run_time_ms = int((now_utc() - started).total_seconds() * 1000)
-            duplicate_of_id = int(decision.duplicate_of_id)
-            decision_payload = {
-                "is_duplicate": decision.is_duplicate,
-                "duplicate_of_id": duplicate_of_id,
-                "reason": decision.reason,
-            }
-            with self.db.connect() as conn:
-                self.db.update_metadata(
-                    conn,
-                    metadata_id,
-                    status="completed",
-                    error=None,
-                    run_time_ms=run_time_ms,
-                    raw_token_usage=result.usage,
-                    codex_session_id=result.codex_session_id,
-                    codex_source_home=selected_home,
-                    stub=True,
-                    stub_explanation=f"dup of #{duplicate_of_id}",
-                    prompt_filled=prompt,
-                    phase="completed",
-                    output_json=decision_payload,
-                    duplicate_of_prev_id=duplicate_of_id,
-                    model=dedupe_model,
-                    harness="codex",
-                    thinking_effort="high",
-                    model_provider="codex",
-                )
-                conn.commit()
-            LOGGER.info(
-                "scan %s depth-2 candidate %s skipped as duplicate of %s",
-                scan_id,
-                job.state.prev_id,
-                duplicate_of_id,
-            )
-            return True
-
     def recover_orphaned_metadata(self, engine_started_at):
         with self.db.connect() as conn:
             counts = self.db.mark_orphaned_running_metadata_interrupted(
@@ -991,9 +822,19 @@ class Worker:
     def run_scan_once(self, worker_id: int = 1) -> bool:
         if not self._worker_can_pick_job(worker_id):
             return False
+        if not hasattr(self, "_supplemental_dispatch_next"):
+            self._supplemental_dispatch_next = {}
+        supplemental_next = self._supplemental_dispatch_next.get(worker_id, True)
+        if supplemental_next and self.run_supplemental_post_script_once(worker_id=worker_id):
+            self._supplemental_dispatch_next[worker_id] = False
+            return True
         scan = self._reserve_scan()
         if not scan:
+            if not supplemental_next and self.run_supplemental_post_script_once(worker_id=worker_id):
+                self._supplemental_dispatch_next[worker_id] = False
+                return True
             return False
+        self._supplemental_dispatch_next[worker_id] = True
 
         task_finished = False
         try:
@@ -1058,6 +899,105 @@ class Worker:
             self._release_scan(int(scan["id"]))
             if task_finished:
                 self._schedule_post_task_cleanup()
+
+    def run_supplemental_post_script_once(self, worker_id: int = 1) -> bool:
+        if not self._worker_can_pick_job(worker_id):
+            return False
+        claim = getattr(self.db, "claim_supplemental_post_script_target", None)
+        if not callable(claim):
+            return False
+        if not self._memory_allows_new_runner():
+            return False
+        with self.db.connect() as conn:
+            job = claim(conn)
+            conn.commit()
+        if not job:
+            return False
+
+        target_id = int(job["target"]["id"])
+        scan_id = int(job["scan"]["id"])
+        if not self._new_scan_container_allowed(scan_id):
+            with self.db.connect() as conn:
+                self.db.defer_supplemental_post_script_target(
+                    conn,
+                    target_id=target_id,
+                    error="Waiting for enough free storage to create the post-script workspace.",
+                    retry_after_seconds=max(1.0, float(getattr(self.config, "poll_seconds", 5.0) or 5.0)),
+                )
+                conn.commit()
+            return True
+
+        run = job["run"]
+        scan = job["scan"]
+        selection = supplemental_post_script_model_selection(scan, run)
+        prompt_template = run["post_script_content"]
+        if str(run.get("post_script_name") or "").strip().casefold() == "patched since":
+            prompt_template = patched_since_prompt(prompt_template)
+        metadata_id = None
+        try:
+            with self.db.connect() as conn:
+                metadata_id = self.db.create_supplemental_post_process_metadata(
+                    conn,
+                    target=job["target"],
+                    run=run,
+                    scan=scan,
+                    prompt_template=prompt_template,
+                    model=selection.model,
+                    harness=selection.harness,
+                    thinking_effort=selection.thinking_effort,
+                    model_provider=selection.model_provider,
+                    run_started_at=now_utc(),
+                )
+                conn.commit()
+            harness = self._harness_for_model_selection(selection)
+            return self.post_processor.process_supplemental_post_script_target(
+                job,
+                harness,
+                metadata_id=metadata_id,
+            )
+        except PostProcessRateLimited as exc:
+            provider = getattr(exc, "provider", None)
+            account_home = getattr(exc, "account_home", None)
+            limit_kind = getattr(exc, "limit_kind", "rate_limited")
+            retry_after_seconds = max(exc.retry_after_seconds, RATE_LIMIT_RESUME_DELAY_SECONDS)
+            if limit_kind not in CAPACITY_RATE_LIMIT_FAILURES:
+                mark_provider_account_rate_limited(provider, account_home)
+                if account_home and not provider_accounts_all_rate_limited(
+                    provider, data_dir=getattr(self.config, "data_dir", None)
+                ):
+                    retry_after_seconds = 0
+            with self.db.connect() as conn:
+                self.db.defer_supplemental_post_script_target(
+                    conn,
+                    target_id=target_id,
+                    error=str(exc),
+                    retry_after_seconds=retry_after_seconds,
+                )
+                conn.commit()
+            LOGGER.warning(
+                "supplemental post-script target %s for scan %s was rate limited and will retry",
+                target_id,
+                scan_id,
+            )
+            return True
+        except Exception as exc:
+            LOGGER.exception("supplemental post-script target %s for scan %s failed", target_id, scan_id)
+            with self.db.connect() as conn:
+                if metadata_id is not None:
+                    self.db.update_post_process_metadata(
+                        conn,
+                        metadata_id,
+                        status="failed",
+                        error=str(exc),
+                        run_time_ms=0,
+                        raw_token_usage=None,
+                        phase="failed",
+                    )
+                self.db.fail_supplemental_post_script_target(conn, target_id=target_id, error=str(exc))
+                conn.commit()
+            return True
+        finally:
+            self._schedule_post_task_cleanup()
 
     def _new_scan_container_allowed(self, scan_id: int) -> bool:
         required_bytes = self.runtime_min_free_storage_bytes()
@@ -1423,25 +1363,13 @@ class Worker:
                     job=job,
                     harness=self._harness_for_model_selection(model_selection),
                     model_selection=model_selection,
-                    include_context_files=bool(getattr(workflow, "include_context_files", False)),
-                    dedupe_step_3=bool(getattr(workflow, "dedupe_step_3", False)),
                 )
                 if did_claim:
                     return True
             if not did_claim:
                 return did_work
 
-    def execute_job(
-        self,
-        *,
-        scan,
-        workflow_id,
-        job,
-        harness,
-        model_selection: ModelSelection | None = None,
-        include_context_files: bool = False,
-        dedupe_step_3: bool = False,
-    ):
+    def execute_job(self, *, scan, workflow_id, job, harness, model_selection: ModelSelection | None = None):
         step = job.step
         state = job.state
         metadata_id = None
@@ -1499,16 +1427,6 @@ class Worker:
                 if metadata_id is None:
                     return False
 
-                if dedupe_step_3 and step.depth == 2:
-                    if self._run_pre_step_3_dedupe(
-                        scan=current_scan,
-                        workflow_id=workflow_id,
-                        metadata_id=metadata_id,
-                        job=job,
-                        selection=selection,
-                    ):
-                        return True
-
                 try:
                     prepared = prepare_dependency_workspace(
                         data_dir=self.config.data_dir,
@@ -1520,17 +1438,14 @@ class Worker:
                         harness_name=harness_name,
                         model_provider=model_provider,
                         use_snapshot_image=image_workspace_enabled(data_dir=getattr(self.config, "data_dir", None)),
-                        include_context_files=include_context_files,
                     )
                     checked_out_commit = prepared.checked_out_commit
                     context = {**state.context, **workspace_context(prepared)}
-                    context = workspace_context_file_references(context, prepared)
                     rendered_prompt = render_prompt(step.content, context)
                     prompt_parts = [
                         native_agent_skills_prompt(agent_skills, harness_name),
                         workspace_prompt_context(prepared.layout, prepared.manifest_json),
                         rendered_prompt,
-                        workspace_context_files_prompt(prepared),
                         repeat_append_prompt(state.repeat_run, prior_repeat_results),
                     ]
                     prompt_filled = harness_prompt(

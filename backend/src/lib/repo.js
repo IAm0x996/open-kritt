@@ -7,7 +7,6 @@ import { isDefaultWorkflowName } from './defaultWorkflows.js';
 
 const PHASE_LABELS = {
   building_workspace: 'Building workspace',
-  checking_duplicates: 'Checking duplicates',
   running_harness: 'Running harness',
   writing_db: 'Writing to DB',
   completed: 'Completed',
@@ -483,7 +482,7 @@ export function errorIsFromPreviousRun(scan, error) {
 
 function metadataKindLabel(row) {
   const kind = row.kind || 'step';
-  if (kind === 'post_script') return row.postScriptName || 'Post-script';
+  if (kind === 'post_script' || kind === 'supplemental_post_script') return row.postScriptName || 'Post-script';
   if (kind === 'dedupe') return 'Dedupe';
   if (kind === 'ranker') return 'Ranker';
   return 'Workflow step';

@@ -16,7 +16,6 @@ def test_workspace_snapshot_key_is_stable_and_tracks_image_checkout_and_manifest
     assert first != workspace_snapshot_key(**{**arguments, "base_image_id": "sha256:other"})
     assert first != workspace_snapshot_key(**{**arguments, "checkout_key": '{"commit":"def"}'})
     assert first != workspace_snapshot_key(**{**arguments, "manifest_json": '{"dependencies":[]}'})
-    assert first != workspace_snapshot_key(**{**arguments, "workspace_files_digest": "different-inputs"})
     assert workspace_snapshot_image_name(first).startswith("open-kritt-workspace-snapshot:")
 
 

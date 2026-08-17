@@ -260,21 +260,6 @@ export function validateWorkflow(body) {
 
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
   if (!name) push('name', 'Workflow name is required.');
-  if (body?.includeContextFiles !== undefined && typeof body.includeContextFiles !== 'boolean') {
-    push('includeContextFiles', 'Include context files must be a boolean.');
-  }
-  if (body?.dedupeStep3 !== undefined && typeof body.dedupeStep3 !== 'boolean') {
-    push('dedupeStep3', 'Step 3 candidate deduplication must be a boolean.');
-  }
-  const declaredExtraKeys = body?.extra === undefined ? [] : body.extra;
-  if (!Array.isArray(declaredExtraKeys)) {
-    push('extra', 'Extra input keys must be an array.');
-  } else {
-    if (declaredExtraKeys.length > 1_000) push('extra', 'At most 1,000 extra input keys are allowed.');
-    declaredExtraKeys.slice(0, 1_000).forEach((key, index) => {
-      if (!isValidKey(key)) push(`extra[${index}]`, 'Extra input keys must be safe identifier names.');
-    });
-  }
 
   const levels = Array.isArray(body?.levels) ? body.levels : null;
   if (!levels || levels.length === 0) {
@@ -379,9 +364,6 @@ export function validateWorkflow(body) {
   const maxDepth = Math.max(...depths);
   for (let d = 0; d <= maxDepth; d++) {
     if (!depthSet.has(d)) push('levels', `Depth ${d} is missing — depths must be contiguous from 0.`);
-  }
-  if (body?.dedupeStep3 === true && !depthSet.has(2)) {
-    push('dedupeStep3', 'Step 3 candidate deduplication requires a workflow depth 2.');
   }
   // Depth 0 may have sibling steps too; like any level they share its output
   // format and multi_output flag (enforced structurally by the level model).
@@ -554,22 +536,17 @@ export function validateWorkflow(body) {
   if (errors.length) throw new ValidationError(errors);
 
   // Collect the distinct {{extra.<key>}} sub-keys referenced anywhere in the workflow.
-  const referencedExtraKeys = [
+  const extraKeys = [
     ...new Set(
       normLevels.flatMap((lvl) =>
         lvl.steps.flatMap((s) => extractExtraKeys(typeof s?.content === 'string' ? s.content : ''))
       )
     ),
   ];
-  const extraKeys = [
-    ...new Set([...(Array.isArray(declaredExtraKeys) ? declaredExtraKeys : []), ...referencedExtraKeys]),
-  ];
 
   return {
     name,
     description: typeof body.description === 'string' ? body.description : null,
-    includeContextFiles: body?.includeContextFiles === true,
-    dedupeStep3: body?.dedupeStep3 === true,
     maxDepth,
     // Persist the EFFECTIVE batching flag (only true when the previous depth is multi).
     levels: normLevels

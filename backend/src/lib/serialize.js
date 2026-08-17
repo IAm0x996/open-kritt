@@ -52,7 +52,9 @@ export function serializeWorkflow(workflow, steps, { scanCount = 0, lastUsed = n
   const ordered = [...steps].sort((a, b) => a.depth - b.depth || Number(a.id - b.id));
   const serializedSteps = ordered.map(serializeStep);
   const depths = [...new Set(serializedSteps.map((s) => s.depth))].sort((a, b) => a - b);
-  // Preserve explicitly declared workspace inputs as well as prompt references.
+  // `extra` is authoritative from the step prompts: the distinct {{extra.<key>}}
+  // sub-keys referenced anywhere in this workflow. We union with whatever is stored
+  // on the row so it's always correct, even for workflows saved before this field.
   const fromSteps = [...new Set(ordered.flatMap((s) => extractExtraKeys(s.content)))];
   const extra = [...new Set([...(workflow.extra || []), ...fromSteps])];
   return {
@@ -60,8 +62,6 @@ export function serializeWorkflow(workflow, steps, { scanCount = 0, lastUsed = n
     name: workflow.name,
     description: workflow.description ?? '',
     extra,
-    includeContextFiles: workflow.includeContextFiles === true,
-    dedupeStep3: workflow.dedupeStep3 === true,
     stepIds: (workflow.stepIds || []).map((x) => x.toString()),
     stepCount: serializedSteps.length,
     depths,
@@ -120,7 +120,6 @@ function normalizeGeneratedWorkflow(result) {
   return {
     name: valid.name,
     description: valid.description ?? '',
-    dedupeStep3: valid.dedupeStep3 === true,
     levels: valid.levels.map((level) => ({
       depth: level.depth,
       multiOutput: level.multiOutput,
@@ -395,6 +394,8 @@ function serializeEnrichment(e) {
     result: e.result && typeof e.result === 'object' ? e.result : null,
     stub: Boolean(e.stub),
     stubExplanation: e.stubExplanation ?? null,
+    supplementalRunId: e.supplementalRunId?.toString() ?? null,
+    supplemental: e.supplementalRunId !== null && e.supplementalRunId !== undefined,
     insertedAt: e.insertedAt,
     updatedAt: e.updatedAt,
   };
@@ -404,6 +405,7 @@ export function serializeVulnerability(v, options = {}) {
   const answer = v.jsonAnswer && typeof v.jsonAnswer === 'object' ? v.jsonAnswer : {};
   const post = v.postScriptAnswer && typeof v.postScriptAnswer === 'object' ? v.postScriptAnswer : null;
   const enrichments = (options.enrichments || []).map(serializeEnrichment);
+  const supplementalEnrichments = enrichments.filter((enrichment) => enrichment.supplemental);
   return {
     id: v.id.toString(),
     scanId: v.scanId.toString(),
@@ -447,9 +449,46 @@ export function serializeVulnerability(v, options = {}) {
       rankedAt: v.bountyRankTs ?? null,
     },
     enrichments,
+    supplementalPostScripts: {
+      count: supplementalEnrichments.length,
+      runIds: [...new Set(supplementalEnrichments.map((enrichment) => enrichment.supplementalRunId))],
+      lastRunAt: supplementalEnrichments.at(-1)?.insertedAt ?? null,
+    },
     comments: v.comments ?? null,
     // User review: 1 = interesting, 0 = not interesting, null = unmarked.
     interesting: v.interesting === null || v.interesting === undefined ? null : Number(v.interesting),
     insertedAt: v.insertedAt,
+  };
+}
+
+export function serializeSupplementalPostScriptRun(run, targets = []) {
+  return {
+    id: run.id.toString(),
+    scanId: run.scanId.toString(),
+    postScriptId: run.postScriptId.toString(),
+    postScriptName: run.postScriptName,
+    model: run.model ?? null,
+    modelProvider: run.modelProvider ?? null,
+    harness: run.harness ?? null,
+    thinkingEffort: run.thinkingEffort ?? null,
+    status: run.status,
+    targetCount: run.targetCount,
+    completedCount: run.completedCount,
+    failedCount: run.failedCount,
+    pendingCount: Math.max(0, run.targetCount - run.completedCount - run.failedCount),
+    startedAt: run.startedAt ?? null,
+    completedAt: run.completedAt ?? null,
+    insertedAt: run.insertedAt,
+    updatedAt: run.updatedAt,
+    targets: targets.map((target) => ({
+      id: target.id.toString(),
+      vulnerabilityId: target.vulnerabilityId.toString(),
+      status: target.status,
+      attempts: target.attempts,
+      error: publicText(target.error, 2000),
+      enrichmentId: target.enrichmentId?.toString() ?? null,
+      startedAt: target.startedAt ?? null,
+      completedAt: target.completedAt ?? null,
+    })),
   };
 }

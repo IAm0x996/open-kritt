@@ -23,8 +23,6 @@ describe('workflow transfer files', () => {
       id: '701',
       name: 'Endpoint inventory',
       description: 'Map public application endpoints.',
-      extra: ['whitepaper'],
-      includeContextFiles: true,
       insertedAt: '2026-07-20T00:00:00Z',
       scanCount: 9,
       steps: [
@@ -59,9 +57,6 @@ describe('workflow transfer files', () => {
       workflow: {
         name: 'Endpoint inventory',
         description: 'Map public application endpoints.',
-        extra: ['whitepaper'],
-        includeContextFiles: true,
-        dedupeStep3: false,
         levels: [
           {
             depth: 0,
@@ -106,9 +101,6 @@ describe('workflow transfer files', () => {
     });
 
     expect(payload.name).toBe('Imported workflow');
-    expect(payload.extra).toEqual([]);
-    expect(payload.includeContextFiles).toBe(false);
-    expect(payload.dedupeStep3).toBe(false);
     expect(payload.levels[0]).toMatchObject({
       depth: 0,
       multiOutput: true,
@@ -116,38 +108,6 @@ describe('workflow transfer files', () => {
       bindPrevious: false,
       steps: [{ name: 'Analyze', content: 'Analyze {{repo_full}}.' }],
     });
-  });
-
-  it('preserves enabled step 3 dedupe for workflows with depth 2', () => {
-    const payload = workflowPayloadFromImport({
-      name: 'Three-stage review',
-      dedupeStep3: true,
-      levels: [
-        {
-          depth: 0,
-          multiOutput: true,
-          outputFormat: { entrypoint: 'string' },
-          steps: [{ content: 'Map entrypoints.' }],
-        },
-        {
-          depth: 1,
-          multiOutput: true,
-          outputFormat: { candidate: 'string' },
-          steps: [{ content: 'Find candidates.' }],
-        },
-        {
-          depth: 2,
-          multiOutput: true,
-          outputFormat: terminalFormat,
-          steps: [{ content: 'Verify candidate.' }],
-        },
-      ],
-    });
-
-    expect(payload.dedupeStep3).toBe(true);
-    expect(() => workflowPayloadFromImport({ ...payload, levels: payload.levels.slice(0, 2) })).toThrow(
-      'workflow.dedupeStep3 requires a depth 2'
-    );
   });
 
   it('imports the existing flat API representation and enforces shared depth configuration', () => {
@@ -179,9 +139,6 @@ describe('workflow transfer files', () => {
     expect(payload).toEqual({
       name: 'Manual API export',
       description: '',
-      extra: [],
-      includeContextFiles: false,
-      dedupeStep3: false,
       levels: [
         {
           depth: 0,
@@ -214,20 +171,6 @@ describe('workflow transfer files', () => {
       'unsupported open-kritt-workflow version "3"'
     );
     expect(() => workflowPayloadFromImport([])).toThrow('JSON root must be an object');
-    expect(() =>
-      workflowPayloadFromImport({
-        name: 'Unsafe extra',
-        extra: ['__proto__'],
-        levels: [
-          {
-            depth: 0,
-            multiOutput: false,
-            outputFormat: terminalFormat,
-            steps: [{ name: 'Analyze', content: 'Analyze {{repo_full}}.' }],
-          },
-        ],
-      })
-    ).toThrow('workflow.extra[0] must be an identifier');
   });
 
   it('round-trips stable one-to-one bindings in version 2 files', () => {

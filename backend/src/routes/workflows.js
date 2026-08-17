@@ -62,14 +62,7 @@ async function persistWorkflow(valid) {
   return prisma.$transaction(async (tx) => {
     const stepIds = await createWorkflowSteps(tx, valid);
     return tx.workflow.create({
-      data: {
-        name: valid.name,
-        description: valid.description,
-        stepIds,
-        extra: valid.extraKeys,
-        includeContextFiles: valid.includeContextFiles,
-        dedupeStep3: valid.dedupeStep3,
-      },
+      data: { name: valid.name, description: valid.description, stepIds, extra: valid.extraKeys },
     });
   });
 }
@@ -92,14 +85,7 @@ export async function replaceWorkflowIfUnused(tx, id, valid) {
   const stepIds = await createWorkflowSteps(tx, valid);
   const workflow = await tx.workflow.update({
     where: { id },
-    data: {
-      name: valid.name,
-      description: valid.description,
-      stepIds,
-      extra: valid.extraKeys,
-      includeContextFiles: valid.includeContextFiles,
-      dedupeStep3: valid.dedupeStep3,
-    },
+    data: { name: valid.name, description: valid.description, stepIds, extra: valid.extraKeys },
   });
   if (existing.stepIds?.length) {
     await tx.step.deleteMany({ where: { id: { in: existing.stepIds } } });

@@ -36,64 +36,6 @@ function workflowWithTerminal(outputFormat) {
   };
 }
 
-test('validateWorkflow preserves declared workspace inputs and its attachment option', () => {
-  const workflow = workflowWithTerminal(terminalOutput);
-  workflow.includeContextFiles = true;
-  workflow.extra = ['whitepaper'];
-  workflow.levels[0].steps[0].content += ' Rank with {{extra.ranker_details}}.';
-
-  const valid = validateWorkflow(workflow);
-
-  assert.equal(valid.includeContextFiles, true);
-  assert.deepEqual(valid.extraKeys, ['whitepaper', 'ranker_details']);
-  assert.throws(
-    () => validateWorkflow({ ...workflow, includeContextFiles: 'yes', extra: ['bad-key'] }),
-    (error) =>
-      error instanceof ValidationError &&
-      error.errors.some((item) => item.field === 'includeContextFiles') &&
-      error.errors.some((item) => item.field === 'extra[0]')
-  );
-});
-
-test('validateWorkflow keeps step 3 candidate dedupe off by default and requires depth 2 when enabled', () => {
-  assert.equal(validateWorkflow(workflowWithTerminal(terminalOutput)).dedupeStep3, false);
-
-  const workflow = {
-    name: 'deduplicated-review',
-    dedupeStep3: true,
-    levels: [
-      {
-        depth: 0,
-        multiOutput: true,
-        outputFormat: { entrypoint: 'string' },
-        steps: [{ name: 'Map', content: 'Map {{repo_full}}.' }],
-      },
-      {
-        depth: 1,
-        multiOutput: true,
-        outputFormat: { candidate: 'string' },
-        steps: [{ name: 'Find candidates', content: 'Inspect {{entrypoint}}.' }],
-      },
-      {
-        depth: 2,
-        multiOutput: true,
-        outputFormat: terminalOutput,
-        steps: [{ name: 'Verify', content: 'Verify {{candidate}}.' }],
-      },
-    ],
-  };
-
-  assert.equal(validateWorkflow(workflow).dedupeStep3, true);
-  assert.throws(
-    () => validateWorkflow({ ...workflowWithTerminal(terminalOutput), dedupeStep3: true }),
-    (error) => error instanceof ValidationError && error.errors.some((item) => item.field === 'dedupeStep3')
-  );
-  assert.throws(
-    () => validateWorkflow({ ...workflow, dedupeStep3: 'yes' }),
-    (error) => error instanceof ValidationError && error.errors.some((item) => item.field === 'dedupeStep3')
-  );
-});
-
 test('validateSeverityRanker requires name and content', () => {
   assert.throws(() => validateSeverityRanker({ name: '', content: '' }), ValidationError);
   const ok = validateSeverityRanker({ name: 'baseline', content: '1. rule', description: '  trim me  ' });

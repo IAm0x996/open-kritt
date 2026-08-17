@@ -19,14 +19,7 @@ import {
   workflowStepBindingMarkers,
 } from './WorkflowBuilder.jsx';
 
-const builder = {
-  name: 'copy-of-source',
-  description: '',
-  extra: [],
-  includeContextFiles: false,
-  dedupeStep3: false,
-  levels: [],
-};
+const builder = { name: 'copy-of-source', description: '', levels: [] };
 
 describe('workflowDraftIsDirty', () => {
   it('treats a duplicate or generated workflow as an unsaved draft', () => {
@@ -38,8 +31,6 @@ describe('workflowDraftIsDirty', () => {
     const initial = JSON.stringify(builder);
     expect(workflowDraftIsDirty(builder, initial)).toBe(false);
     expect(workflowDraftIsDirty({ ...builder, name: 'changed' }, initial)).toBe(true);
-    expect(workflowDraftIsDirty({ ...builder, includeContextFiles: true }, initial)).toBe(true);
-    expect(workflowDraftIsDirty({ ...builder, dedupeStep3: true }, initial)).toBe(true);
   });
 });
 
@@ -259,16 +250,6 @@ describe('removeWorkflowStep', () => {
     expect(next.levels.map((level) => level.steps[0].name)).toEqual(['Step 0', 'Step 2', 'Step 3']);
     expect(next.selStepId).toBe('step-2');
     expect(source.levels.map((level) => level.depth)).toEqual([0, 1, 2, 3]);
-  });
-
-  it('turns off step 3 dedupe when removing a depth leaves no depth 2', () => {
-    const source = linearBuilder();
-    source.dedupeStep3 = true;
-
-    const next = removeWorkflowStep(source, 'step-1');
-
-    expect(next.levels.map((level) => level.depth)).toEqual([0, 1]);
-    expect(next.dedupeStep3).toBe(false);
   });
 
   it('renumbers batch variables for every surviving batching boundary', () => {
